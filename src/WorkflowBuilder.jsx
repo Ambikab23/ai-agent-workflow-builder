@@ -7,13 +7,15 @@ function WorkflowBuilder({ user, onBack }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [triggerType, setTriggerType] = useState('manual')
-
   const [steps, setSteps] = useState([])
-
   const [loading, setLoading] = useState(false)
 
+  // =====================================================
+  // CORRECT ORGANIZATION ID
+  // =====================================================
+
   const ORGANIZATION_ID =
-    'c55609d5-c8d3-491c-8de6-a787b5a2e109'
+    'b5e42b9c-cb68-4bdc-9a06-cc3bf013cb58'
 
 
   // =====================================================
@@ -29,8 +31,8 @@ function WorkflowBuilder({ user, onBack }) {
       config: ''
     }
 
-    setSteps([
-      ...steps,
+    setSteps(previousSteps => [
+      ...previousSteps,
       newStep
     ])
   }
@@ -42,8 +44,8 @@ function WorkflowBuilder({ user, onBack }) {
 
   const updateStep = (id, field, value) => {
 
-    setSteps(
-      steps.map(step => {
+    setSteps(previousSteps =>
+      previousSteps.map(step => {
 
         if (step.id === id) {
 
@@ -67,12 +69,11 @@ function WorkflowBuilder({ user, onBack }) {
 
   const removeStep = (id) => {
 
-    setSteps(
-      steps.filter(
+    setSteps(previousSteps =>
+      previousSteps.filter(
         step => step.id !== id
       )
     )
-
   }
 
 
@@ -107,37 +108,30 @@ function WorkflowBuilder({ user, onBack }) {
 
     try {
 
-      console.log(
-        '================================'
-      )
-
-      console.log(
-        'STARTING WORKFLOW CREATION'
-      )
-
-      console.log(
-        'USER ID:',
-        user.id
-      )
-
-      console.log(
-        'ORGANIZATION ID:',
-        ORGANIZATION_ID
-      )
-
-      console.log(
-        'STEPS:',
-        steps
-      )
-
-      console.log(
-        '================================'
-      )
+      console.log('================================')
+      console.log('CREATING WORKFLOW')
+      console.log('USER:', user.id)
+      console.log('ORGANIZATION:', ORGANIZATION_ID)
+      console.log('================================')
 
 
       // =================================================
       // 1. CREATE WORKFLOW
       // =================================================
+
+      /*
+        IMPORTANT:
+
+        We are NOT sending created_by here.
+
+        Your database schema exposes created_by,
+        but the browser previously returned:
+
+        field 'created_by' not found in type
+        'workflows_insert_input'
+
+        Removing it avoids the schema mismatch.
+      */
 
       const workflowMutation = `
         mutation CreateWorkflow(
@@ -145,6 +139,7 @@ function WorkflowBuilder({ user, onBack }) {
           $name: String!
           $description: String
         ) {
+
           insert_workflows_one(
             object: {
               org_id: $orgId
@@ -152,14 +147,16 @@ function WorkflowBuilder({ user, onBack }) {
               description: $description
             }
           ) {
+
             id
             org_id
             name
             description
-            created_by
             created_at
             updated_at
+
           }
+
         }
       `
 
@@ -170,14 +167,10 @@ function WorkflowBuilder({ user, onBack }) {
           query: workflowMutation,
 
           variables: {
-
             orgId: ORGANIZATION_ID,
-
             name: name.trim(),
-
             description:
               description.trim() || null
-
           }
 
         })
@@ -189,10 +182,6 @@ function WorkflowBuilder({ user, onBack }) {
       )
 
 
-      // =================================================
-      // CHECK WORKFLOW ERRORS
-      // =================================================
-
       if (
         workflowResponse?.body?.errors?.length
       ) {
@@ -202,13 +191,12 @@ function WorkflowBuilder({ user, onBack }) {
           workflowResponse.body.errors
         )
 
-        alert(
+        throw new Error(
           workflowResponse.body.errors
             .map(error => error.message)
             .join('\n')
         )
 
-        return
       }
 
 
@@ -221,16 +209,10 @@ function WorkflowBuilder({ user, onBack }) {
 
       if (!workflow) {
 
-        console.error(
-          'WORKFLOW WAS NOT RETURNED:',
-          workflowResponse
+        throw new Error(
+          'Workflow was not created.'
         )
 
-        alert(
-          'Workflow was not created. Check the browser console.'
-        )
-
-        return
       }
 
 
@@ -244,24 +226,39 @@ function WorkflowBuilder({ user, onBack }) {
       // 2. CREATE TRIGGER
       // =================================================
 
+      /*
+        Your workflow_triggers table DOES NOT have
+        an enabled column.
+
+        Therefore we only insert:
+        workflow_id
+        type
+        config
+      */
+
       const triggerMutation = `
         mutation CreateTrigger(
           $workflowId: uuid!
           $triggerType: String!
+          $config: jsonb!
         ) {
+
           insert_workflow_triggers_one(
             object: {
               workflow_id: $workflowId
               type: $triggerType
-              enabled: true
+              config: $config
             }
           ) {
+
             id
             workflow_id
             type
-            enabled
+            config
             created_at
+
           }
+
         }
       `
 
@@ -277,7 +274,9 @@ function WorkflowBuilder({ user, onBack }) {
               workflow.id,
 
             triggerType:
-              triggerType
+              triggerType,
+
+            config: {}
 
           }
 
@@ -290,10 +289,6 @@ function WorkflowBuilder({ user, onBack }) {
       )
 
 
-      // =================================================
-      // CHECK TRIGGER ERRORS
-      // =================================================
-
       if (
         triggerResponse?.body?.errors?.length
       ) {
@@ -303,14 +298,13 @@ function WorkflowBuilder({ user, onBack }) {
           triggerResponse.body.errors
         )
 
-        alert(
-          'Workflow was created, but trigger creation failed:\n\n' +
+        throw new Error(
+          'Trigger creation failed:\n\n' +
           triggerResponse.body.errors
             .map(error => error.message)
             .join('\n')
         )
 
-        return
       }
 
 
@@ -324,8 +318,7 @@ function WorkflowBuilder({ user, onBack }) {
         index++
       ) {
 
-        const step =
-          steps[index]
+        const step = steps[index]
 
 
         console.log(
@@ -334,31 +327,47 @@ function WorkflowBuilder({ user, onBack }) {
         )
 
 
+        /*
+          IMPORTANT:
+
+          Your database uses:
+
+              position
+
+          NOT:
+
+              step_order
+        */
+
         const stepMutation = `
           mutation CreateWorkflowStep(
             $workflowId: uuid!
             $name: String!
-            $stepOrder: Int!
+            $position: Int!
             $type: String!
             $config: jsonb!
           ) {
+
             insert_workflow_steps_one(
               object: {
                 workflow_id: $workflowId
                 name: $name
-                step_order: $stepOrder
+                position: $position
                 type: $type
                 config: $config
               }
             ) {
+
               id
               workflow_id
               name
-              step_order
+              position
               type
               config
               created_at
+
             }
+
           }
         `
 
@@ -376,7 +385,7 @@ function WorkflowBuilder({ user, onBack }) {
               name:
                 step.name.trim(),
 
-              stepOrder:
+              position:
                 index + 1,
 
               type:
@@ -398,10 +407,6 @@ function WorkflowBuilder({ user, onBack }) {
         )
 
 
-        // =================================================
-        // CHECK STEP ERRORS
-        // =================================================
-
         if (
           stepResponse?.body?.errors?.length
         ) {
@@ -411,14 +416,13 @@ function WorkflowBuilder({ user, onBack }) {
             stepResponse.body.errors
           )
 
-          alert(
-            `Workflow was created, but Step ${index + 1} failed:\n\n` +
+          throw new Error(
+            `Step ${index + 1} creation failed:\n\n` +
             stepResponse.body.errors
               .map(error => error.message)
               .join('\n')
           )
 
-          return
         }
 
 
@@ -431,16 +435,10 @@ function WorkflowBuilder({ user, onBack }) {
 
         if (!createdStep) {
 
-          console.error(
-            `STEP ${index + 1} WAS NOT RETURNED:`,
-            stepResponse
+          throw new Error(
+            `Step ${index + 1} was not created.`
           )
 
-          alert(
-            `Workflow was created, but Step ${index + 1} was not created.`
-          )
-
-          return
         }
 
 
@@ -456,51 +454,31 @@ function WorkflowBuilder({ user, onBack }) {
       // SUCCESS
       // =================================================
 
-      console.log(
-        '================================'
-      )
-
-      console.log(
-        'WORKFLOW SAVED SUCCESSFULLY'
-      )
-
-      console.log(
-        'WORKFLOW:',
-        workflow
-      )
-
-      console.log(
-        'TOTAL STEPS:',
-        steps.length
-      )
-
-      console.log(
-        '================================'
-      )
+      console.log('================================')
+      console.log('WORKFLOW CREATED SUCCESSFULLY')
+      console.log('WORKFLOW:', workflow)
+      console.log('STEPS:', steps.length)
+      console.log('================================')
 
 
       alert(
-        `Workflow saved successfully!\n\nSteps created: ${steps.length}`
+        `Workflow "${workflow.name}" created successfully!\n\n` +
+        `Steps created: ${steps.length}`
       )
 
 
       // Clear form
 
       setName('')
-
       setDescription('')
-
       setTriggerType('manual')
-
       setSteps([])
 
 
       // Go back to dashboard
 
       if (onBack) {
-
         onBack()
-
       }
 
 
@@ -548,14 +526,12 @@ function WorkflowBuilder({ user, onBack }) {
 
     <div className="workflow-builder">
 
-
-      {/* =================================================
-          HEADER
-      ================================================= */}
+      {/* HEADER */}
 
       <header className="builder-header">
 
         <button
+          type="button"
           className="back-button"
           onClick={onBack}
           disabled={loading}
@@ -571,30 +547,24 @@ function WorkflowBuilder({ user, onBack }) {
       </header>
 
 
-      {/* =================================================
-          MAIN
-      ================================================= */}
+      {/* MAIN */}
 
       <main className="builder-content">
 
         <div className="builder-card">
 
-
-          {/* =================================================
-              WORKFLOW DETAILS
-          ================================================= */}
+          {/* WORKFLOW DETAILS */}
 
           <h2>
             Workflow Details
           </h2>
 
 
-          {/* WORKFLOW NAME */}
+          {/* NAME */}
 
           <label>
             Workflow Name
           </label>
-
 
           <input
             type="text"
@@ -613,7 +583,6 @@ function WorkflowBuilder({ user, onBack }) {
             Description
           </label>
 
-
           <textarea
             placeholder="Describe what this workflow does"
             value={description}
@@ -629,7 +598,6 @@ function WorkflowBuilder({ user, onBack }) {
           <label>
             Trigger
           </label>
-
 
           <select
             value={triggerType}
@@ -658,9 +626,7 @@ function WorkflowBuilder({ user, onBack }) {
           </select>
 
 
-          {/* =================================================
-              WORKFLOW STEPS
-          ================================================= */}
+          {/* WORKFLOW STEPS */}
 
           <div
             style={{
@@ -673,8 +639,6 @@ function WorkflowBuilder({ user, onBack }) {
             </h2>
 
 
-            {/* NO STEPS */}
-
             {steps.length === 0 && (
 
               <p>
@@ -684,23 +648,25 @@ function WorkflowBuilder({ user, onBack }) {
             )}
 
 
-            {/* STEPS */}
-
             {steps.map(
               (step, index) => (
 
                 <div
                   key={step.id}
                   style={{
-                    border: '1px solid #ddd',
-                    borderRadius: '10px',
-                    padding: '20px',
-                    marginTop: '15px'
+                    border:
+                      '1px solid #ddd',
+
+                    borderRadius:
+                      '10px',
+
+                    padding:
+                      '20px',
+
+                    marginTop:
+                      '15px'
                   }}
                 >
-
-
-                  {/* STEP NUMBER */}
 
                   <h3>
                     Step {index + 1}
@@ -712,7 +678,6 @@ function WorkflowBuilder({ user, onBack }) {
                   <label>
                     Step Name
                   </label>
-
 
                   <input
                     type="text"
@@ -733,7 +698,6 @@ function WorkflowBuilder({ user, onBack }) {
                   <label>
                     Step Type
                   </label>
-
 
                   <select
                     value={step.type}
@@ -774,12 +738,11 @@ function WorkflowBuilder({ user, onBack }) {
                   </select>
 
 
-                  {/* CONFIGURATION */}
+                  {/* CONFIG */}
 
                   <label>
                     Configuration
                   </label>
-
 
                   <textarea
                     placeholder="Enter step configuration or prompt"
@@ -804,12 +767,12 @@ function WorkflowBuilder({ user, onBack }) {
                     }
                     disabled={loading}
                     style={{
-                      marginTop: '10px'
+                      marginTop:
+                        '10px'
                     }}
                   >
                     Remove Step
                   </button>
-
 
                 </div>
 
@@ -817,32 +780,29 @@ function WorkflowBuilder({ user, onBack }) {
             )}
 
 
-            {/* =================================================
-                ADD STEP
-            ================================================= */}
+            {/* ADD STEP */}
 
             <button
               type="button"
               onClick={addStep}
               disabled={loading}
               style={{
-                marginTop: '15px'
+                marginTop:
+                  '15px'
               }}
             >
               + Add Step
             </button>
 
-
           </div>
 
 
-          {/* =================================================
-              ACTION BUTTONS
-          ================================================= */}
+          {/* ACTIONS */}
 
           <div className="builder-actions">
 
             <button
+              type="button"
               className="cancel-button"
               onClick={onBack}
               disabled={loading}
@@ -852,6 +812,7 @@ function WorkflowBuilder({ user, onBack }) {
 
 
             <button
+              type="button"
               className="save-button"
               onClick={handleSave}
               disabled={loading}
@@ -865,7 +826,6 @@ function WorkflowBuilder({ user, onBack }) {
 
           </div>
 
-
         </div>
 
       </main>
@@ -873,7 +833,7 @@ function WorkflowBuilder({ user, onBack }) {
     </div>
 
   )
-
 }
+
 
 export default WorkflowBuilder

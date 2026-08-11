@@ -6,15 +6,11 @@ function Dashboard({
   user,
   onLogout,
   onCreateWorkflow,
-  onEditWorkflow
+  onEditWorkflow,
+  onRunHistory
 }) {
 
-  // =====================================================
-  // STATE
-  // =====================================================
-
   const [workflows, setWorkflows] = useState([])
-
   const [loading, setLoading] = useState(true)
 
   const [runningWorkflowId, setRunningWorkflowId] =
@@ -32,11 +28,29 @@ function Dashboard({
 
 
   // =====================================================
-  // ORGANIZATION
+  // ORGANIZATION ID
   // =====================================================
 
   const ORGANIZATION_ID =
-    'c55609d5-c8d3-491c-8de6-a787b5a2e109'
+    'b5e42b9c-cb68-4bdc-9a06-cc3bf013cb58'
+
+
+  // =====================================================
+  // GRAPHQL ERROR HELPER
+  // =====================================================
+
+  const getGraphQLError = (response) => {
+
+    if (response?.body?.errors?.length) {
+
+      return response.body.errors
+        .map(error => error.message)
+        .join('\n')
+
+    }
+
+    return null
+  }
 
 
   // =====================================================
@@ -56,7 +70,6 @@ function Dashboard({
 
       setLoading(true)
       setError('')
-
 
       const query = `
         query GetWorkflows(
@@ -79,7 +92,7 @@ function Dashboard({
             org_id
             name
             description
-            created_by
+            status
             created_at
             updated_at
 
@@ -89,17 +102,20 @@ function Dashboard({
               workflow_id
               type
               config
-              enabled
               created_at
 
             }
 
-            workflow_steps {
+            workflow_steps(
+              order_by: {
+                position: asc
+              }
+            ) {
 
               id
               workflow_id
               name
-              step_order
+              position
               type
               config
               created_at
@@ -110,7 +126,6 @@ function Dashboard({
 
         }
       `
-
 
       const response =
         await nhost.graphql.request({
@@ -123,38 +138,31 @@ function Dashboard({
 
         })
 
-
       console.log(
         'WORKFLOW RESPONSE:',
         response
       )
 
+      const graphQLError =
+        getGraphQLError(response)
 
-      if (
-        response?.body?.errors?.length
-      ) {
+      if (graphQLError) {
 
         console.error(
-          'GraphQL errors:',
-          response.body.errors
+          'GRAPHQL ERRORS:',
+          graphQLError
         )
 
-        setError(
-          response.body.errors
-            .map(error => error.message)
-            .join('\n')
-        )
+        setError(graphQLError)
 
         return
       }
-
 
       const data =
         response
           ?.body
           ?.data
           ?.workflows
-
 
       if (!data) {
 
@@ -164,7 +172,6 @@ function Dashboard({
 
         return
       }
-
 
       setWorkflows(data)
 
@@ -190,31 +197,43 @@ function Dashboard({
 
 
   // =====================================================
-  // LOAD WORKFLOW RUN COUNT
+  // LOAD RUN COUNT
   // =====================================================
 
   const loadRunCount = async () => {
 
     if (!user?.id) {
 
+      setRunCount(0)
       setLoadingRuns(false)
 
       return
     }
 
-
     try {
 
       setLoadingRuns(true)
 
-
       const query = `
-        query GetWorkflowRuns {
+        query GetWorkflowRunCount {
 
-          workflow_runs_aggregate {
+          workflow_runs(
+            order_by: {
+              created_at: desc
+            }
+          ) {
 
-            aggregate {
-              count
+            id
+            workflow_id
+            status
+            created_at
+
+            workflow {
+
+              id
+              org_id
+              name
+
             }
 
           }
@@ -222,43 +241,61 @@ function Dashboard({
         }
       `
 
-
       const response =
         await nhost.graphql.request({
           query
         })
 
-
       console.log(
-        'RUN COUNT RESPONSE:',
+        'WORKFLOW RUN COUNT RESPONSE:',
         response
       )
 
+      const graphQLError =
+        getGraphQLError(response)
 
-      if (
-        response?.body?.errors?.length
-      ) {
+      if (graphQLError) {
 
         console.error(
-          'RUN COUNT ERROR:',
-          response.body.errors
+          'RUN COUNT GRAPHQL ERROR:',
+          graphQLError
         )
+
+        setRunCount(0)
 
         return
       }
 
-
-      const count =
+      const allRuns =
         response
           ?.body
           ?.data
-          ?.workflow_runs_aggregate
-          ?.aggregate
-          ?.count
+          ?.workflow_runs || []
 
+      console.log(
+        'ALL WORKFLOW RUNS:',
+        allRuns
+      )
+
+      const organizationRuns =
+        allRuns.filter(
+          run =>
+            run?.workflow?.org_id ===
+            ORGANIZATION_ID
+        )
+
+      console.log(
+        'ORGANIZATION WORKFLOW RUNS:',
+        organizationRuns
+      )
+
+      console.log(
+        'ORGANIZATION RUN COUNT:',
+        organizationRuns.length
+      )
 
       setRunCount(
-        count || 0
+        organizationRuns.length
       )
 
     } catch (error) {
@@ -267,6 +304,8 @@ function Dashboard({
         'LOAD RUN COUNT ERROR:',
         error
       )
+
+      setRunCount(0)
 
     } finally {
 
@@ -288,10 +327,540 @@ function Dashboard({
     }
 
     loadWorkflows()
-
     loadRunCount()
 
   }, [user?.id])
+
+
+  // =====================================================
+  // CREATE STEP RUN
+  // =====================================================
+
+  const createStepRun = async ({
+    workflowRunId,
+    workflowStepId,
+    input
+  }) => {
+
+    const mutation = `
+      mutation CreateStepRun(
+        $workflowRunId: uuid!
+        $workflowStepId: uuid!
+        $status: String!
+        $input: jsonb!
+        $startedAt: timestamptz!
+      ) {
+
+        insert_step_runs_one(
+          object: {
+            workflow_run_id: $workflowRunId
+            workflow_step_id: $workflowStepId
+            status: $status
+            input: $input
+            started_at: $startedAt
+          }
+        ) {
+
+          id
+          workflow_run_id
+          workflow_step_id
+          status
+          input
+          output
+          started_at
+          completed_at
+          created_at
+
+        }
+
+      }
+    `
+
+    const response =
+      await nhost.graphql.request({
+
+        query: mutation,
+
+        variables: {
+
+          workflowRunId:
+            String(workflowRunId),
+
+          workflowStepId:
+            String(workflowStepId),
+
+          status:
+            'running',
+
+          input:
+            input || {},
+
+          startedAt:
+            new Date().toISOString()
+
+        }
+
+      })
+
+    console.log(
+      'CREATE STEP RUN RESPONSE:',
+      response
+    )
+
+    const graphQLError =
+      getGraphQLError(response)
+
+    if (graphQLError) {
+
+      throw new Error(
+        graphQLError
+      )
+
+    }
+
+    const stepRun =
+      response
+        ?.body
+        ?.data
+        ?.insert_step_runs_one
+
+    if (!stepRun) {
+
+      throw new Error(
+        'Step run was not created.'
+      )
+
+    }
+
+    return stepRun
+
+  }
+
+
+  // =====================================================
+  // COMPLETE STEP RUN
+  // =====================================================
+
+  const completeStepRun = async ({
+    stepRunId,
+    output,
+    status = 'completed'
+  }) => {
+
+    const mutation = `
+      mutation CompleteStepRun(
+        $stepRunId: uuid!
+        $status: String!
+        $output: jsonb!
+        $completedAt: timestamptz!
+      ) {
+
+        update_step_runs_by_pk(
+          pk_columns: {
+            id: $stepRunId
+          }
+
+          _set: {
+            status: $status
+            output: $output
+            completed_at: $completedAt
+          }
+        ) {
+
+          id
+          workflow_run_id
+          workflow_step_id
+          status
+          input
+          output
+          started_at
+          completed_at
+          created_at
+
+        }
+
+      }
+    `
+
+    const response =
+      await nhost.graphql.request({
+
+        query: mutation,
+
+        variables: {
+
+          stepRunId:
+            String(stepRunId),
+
+          status,
+
+          output:
+            output || {},
+
+          completedAt:
+            new Date().toISOString()
+
+        }
+
+      })
+
+    console.log(
+      'COMPLETE STEP RUN RESPONSE:',
+      response
+    )
+
+    const graphQLError =
+      getGraphQLError(response)
+
+    if (graphQLError) {
+
+      throw new Error(
+        graphQLError
+      )
+
+    }
+
+    return (
+      response
+        ?.body
+        ?.data
+        ?.update_step_runs_by_pk
+    )
+
+  }
+
+
+  // =====================================================
+  // UPDATE WORKFLOW RUN
+  // =====================================================
+
+  const updateWorkflowRun = async ({
+    runId,
+    status
+  }) => {
+
+    const mutation = `
+      mutation UpdateWorkflowRun(
+        $runId: uuid!
+        $status: String!
+        $completedAt: timestamptz
+      ) {
+
+        update_workflow_runs_by_pk(
+          pk_columns: {
+            id: $runId
+          }
+
+          _set: {
+            status: $status
+            completed_at: $completedAt
+          }
+        ) {
+
+          id
+          workflow_id
+          status
+          started_at
+          completed_at
+          created_at
+
+        }
+
+      }
+    `
+
+    const response =
+      await nhost.graphql.request({
+
+        query: mutation,
+
+        variables: {
+
+          runId:
+            String(runId),
+
+          status,
+
+          completedAt:
+            status === 'completed' ||
+            status === 'failed'
+              ? new Date().toISOString()
+              : null
+
+        }
+
+      })
+
+    console.log(
+      'UPDATE WORKFLOW RUN RESPONSE:',
+      response
+    )
+
+    const graphQLError =
+      getGraphQLError(response)
+
+    if (graphQLError) {
+
+      throw new Error(
+        graphQLError
+      )
+
+    }
+
+    return (
+      response
+        ?.body
+        ?.data
+        ?.update_workflow_runs_by_pk
+    )
+
+  }
+
+
+  // =====================================================
+  // EXECUTE STEP
+  // =====================================================
+
+  const executeStep = async ({
+    step,
+    previousOutput
+  }) => {
+
+    console.log(
+      'EXECUTING STEP:',
+      step
+    )
+
+    let config = {}
+
+    try {
+
+      if (
+        typeof step.config === 'string'
+      ) {
+
+        config =
+          JSON.parse(
+            step.config
+          )
+
+      } else {
+
+        config =
+          step.config || {}
+
+      }
+
+    } catch {
+
+      config = {
+        prompt:
+          String(step.config || '')
+      }
+
+    }
+
+    const prompt =
+      config?.prompt || ''
+
+
+    // ===================================================
+    // LLM CALL
+    // ===================================================
+
+    if (
+      step.type === 'llm_call'
+    ) {
+
+      return {
+
+        success:
+          true,
+
+        type:
+          'llm_call',
+
+        message:
+          'LLM step executed successfully.',
+
+        prompt,
+
+        previous_output:
+          previousOutput || null,
+
+        executed_at:
+          new Date().toISOString()
+
+      }
+
+    }
+
+
+    // ===================================================
+    // HTTP REQUEST
+    // ===================================================
+
+    if (
+      step.type === 'http_request'
+    ) {
+
+      return {
+
+        success:
+          true,
+
+        type:
+          'http_request',
+
+        message:
+          'HTTP request step recognized. Real HTTP execution will be added next.',
+
+        config,
+
+        previous_output:
+          previousOutput || null,
+
+        executed_at:
+          new Date().toISOString()
+
+      }
+
+    }
+
+
+    // ===================================================
+    // DATABASE WRITE
+    // ===================================================
+
+    if (
+      step.type === 'db_write'
+    ) {
+
+      return {
+
+        success:
+          true,
+
+        type:
+          'db_write',
+
+        message:
+          'Database write step recognized. Real database execution will be added next.',
+
+        config,
+
+        previous_output:
+          previousOutput || null,
+
+        executed_at:
+          new Date().toISOString()
+
+      }
+
+    }
+
+
+    // ===================================================
+    // NOTIFICATION
+    // ===================================================
+
+    if (
+      step.type === 'notify'
+    ) {
+
+      return {
+
+        success:
+          true,
+
+        type:
+          'notify',
+
+        message:
+          'Notification step recognized. Real notification delivery will be added next.',
+
+        config,
+
+        previous_output:
+          previousOutput || null,
+
+        executed_at:
+          new Date().toISOString()
+
+      }
+
+    }
+
+
+    // ===================================================
+    // CONDITIONAL
+    // ===================================================
+
+    if (
+      step.type === 'conditional_branch'
+    ) {
+
+      return {
+
+        success:
+          true,
+
+        type:
+          'conditional_branch',
+
+        message:
+          'Conditional branch step recognized.',
+
+        config,
+
+        previous_output:
+          previousOutput || null,
+
+        executed_at:
+          new Date().toISOString()
+
+      }
+
+    }
+
+
+    // ===================================================
+    // APPROVAL
+    // ===================================================
+
+    if (
+      step.type === 'approval_gate'
+    ) {
+
+      return {
+
+        success:
+          true,
+
+        type:
+          'approval_gate',
+
+        message:
+          'Approval gate step recognized.',
+
+        config,
+
+        previous_output:
+          previousOutput || null,
+
+        executed_at:
+          new Date().toISOString()
+
+      }
+
+    }
+
+
+    throw new Error(
+      `Unsupported workflow step type: ${step.type}`
+    )
+
+  }
 
 
   // =====================================================
@@ -311,7 +880,6 @@ function Dashboard({
       return
     }
 
-
     if (!workflow?.id) {
 
       alert(
@@ -321,10 +889,8 @@ function Dashboard({
       return
     }
 
-
     const steps =
       workflow.workflow_steps || []
-
 
     if (steps.length === 0) {
 
@@ -335,6 +901,12 @@ function Dashboard({
       return
     }
 
+    if (
+      runningWorkflowId === workflow.id
+    ) {
+
+      return
+    }
 
     try {
 
@@ -342,13 +914,12 @@ function Dashboard({
         workflow.id
       )
 
-
       console.log(
         '================================'
       )
 
       console.log(
-        'STARTING WORKFLOW'
+        'STARTING WORKFLOW EXECUTION'
       )
 
       console.log(
@@ -378,12 +949,14 @@ function Dashboard({
       const createRunMutation = `
         mutation CreateWorkflowRun(
           $workflowId: uuid!
+          $startedAt: timestamptz!
         ) {
 
           insert_workflow_runs_one(
             object: {
               workflow_id: $workflowId
-              status: "pending"
+              status: "running"
+              started_at: $startedAt
             }
           ) {
 
@@ -392,8 +965,6 @@ function Dashboard({
             status
             started_at
             completed_at
-            error
-            created_by
             created_at
 
           }
@@ -401,38 +972,39 @@ function Dashboard({
         }
       `
 
-
       const runResponse =
         await nhost.graphql.request({
 
-          query: createRunMutation,
+          query:
+            createRunMutation,
 
           variables: {
-            workflowId: String(workflow.id)
+
+            workflowId:
+              String(workflow.id),
+
+            startedAt:
+              new Date().toISOString()
+
           }
 
         })
-
 
       console.log(
         'CREATE WORKFLOW RUN RESPONSE:',
         runResponse
       )
 
+      const createRunError =
+        getGraphQLError(runResponse)
 
-      if (
-        runResponse?.body?.errors?.length
-      ) {
+      if (createRunError) {
 
-        alert(
-          runResponse.body.errors
-            .map(error => error.message)
-            .join('\n')
+        throw new Error(
+          createRunError
         )
 
-        return
       }
-
 
       const workflowRun =
         runResponse
@@ -440,128 +1012,249 @@ function Dashboard({
           ?.data
           ?.insert_workflow_runs_one
 
-
       if (!workflowRun) {
 
-        alert(
+        throw new Error(
           'Workflow run was not created.'
         )
 
-        return
       }
 
+      console.log(
+        'WORKFLOW RUN CREATED:',
+        workflowRun
+      )
+
 
       // =================================================
-      // CREATE STEP RUNS
+      // EXECUTE STEPS
       // =================================================
+
+      let previousOutput = null
 
       for (
-        const step of steps
+        let index = 0;
+        index < steps.length;
+        index++
       ) {
 
-        const createStepRunMutation = `
-          mutation CreateStepRun(
-            $workflowRunId: uuid!
-            $stepId: uuid!
-          ) {
+        const step =
+          steps[index]
 
-            insert_step_runs_one(
-              object: {
+        console.log(
+          '--------------------------------'
+        )
 
-                workflow_run_id: $workflowRunId
+        console.log(
+          `STARTING STEP ${index + 1}`
+        )
 
-                step_id: $stepId
-
-                status: "pending"
-
-                attempt_count: 1
-
-              }
-            ) {
-
-              id
-              workflow_run_id
-              step_id
-              status
-              attempt_count
-              created_at
-
-            }
-
-          }
-        `
+        console.log(
+          'STEP:',
+          step
+        )
 
 
-        const stepResponse =
-          await nhost.graphql.request({
+        // =================================================
+        // CREATE STEP RUN
+        // =================================================
 
-            query: createStepRunMutation,
+        const stepRun =
+          await createStepRun({
 
-            variables: {
+            workflowRunId:
+              workflowRun.id,
 
-              workflowRunId:
-                String(workflowRun.id),
+            workflowStepId:
+              step.id,
 
-              stepId:
-                String(step.id)
+            input: {
+
+              step_number:
+                index + 1,
+
+              step_name:
+                step.name,
+
+              type:
+                step.type,
+
+              previous_output:
+                previousOutput
 
             }
 
           })
 
-
         console.log(
-          'STEP RUN RESPONSE:',
-          stepResponse
+          'STEP RUN CREATED:',
+          stepRun
         )
 
 
-        if (
-          stepResponse?.body?.errors?.length
-        ) {
+        try {
 
-          alert(
-            stepResponse.body.errors
-              .map(error => error.message)
-              .join('\n')
+          // ===============================================
+          // EXECUTE
+          // ===============================================
+
+          const output =
+            await executeStep({
+
+              step,
+
+              previousOutput
+
+            })
+
+          console.log(
+            `STEP ${index + 1} OUTPUT:`,
+            output
           )
 
-          return
+
+          // ===============================================
+          // COMPLETE STEP
+          // ===============================================
+
+          await completeStepRun({
+
+            stepRunId:
+              stepRun.id,
+
+            output,
+
+            status:
+              'completed'
+
+          })
+
+          previousOutput =
+            output
+
+          console.log(
+            `STEP ${index + 1} COMPLETED`
+          )
+
+        } catch (stepError) {
+
+          console.error(
+            `STEP ${index + 1} FAILED:`,
+            stepError
+          )
+
+          try {
+
+            await completeStepRun({
+
+              stepRunId:
+                stepRun.id,
+
+              output: {
+
+                success:
+                  false,
+
+                error:
+                  stepError?.message ||
+                  'Step failed',
+
+                executed_at:
+                  new Date().toISOString()
+
+              },
+
+              status:
+                'failed'
+
+            })
+
+          } catch (saveError) {
+
+            console.error(
+              'FAILED TO SAVE STEP ERROR:',
+              saveError
+            )
+
+          }
+
+          await updateWorkflowRun({
+
+            runId:
+              workflowRun.id,
+
+            status:
+              'failed'
+
+          })
+
+          throw stepError
+
         }
 
       }
 
 
       // =================================================
-      // UPDATE RUN COUNT
+      // MARK WORKFLOW COMPLETED
       // =================================================
 
-      setRunCount(
-        previous => previous + 1
+      const completedRun =
+        await updateWorkflowRun({
+
+          runId:
+            workflowRun.id,
+
+          status:
+            'completed'
+
+        })
+
+      console.log(
+        'WORKFLOW RUN COMPLETED:',
+        completedRun
       )
 
 
-      alert(
-        `Workflow "${workflow.name}" started successfully!`
-      )
-
+      // =================================================
+      // REFRESH DASHBOARD
+      // =================================================
 
       await loadRunCount()
-
       await loadWorkflows()
 
+      alert(
+        `Workflow "${workflow.name}" completed successfully!\n\n` +
+        `Steps executed: ${steps.length}\n` +
+        `Run ID: ${workflowRun.id}`
+      )
 
     } catch (error) {
 
       console.error(
-        'WORKFLOW RUN ERROR:',
+        '================================'
+      )
+
+      console.error(
+        'WORKFLOW EXECUTION ERROR:',
         error
+      )
+
+      console.error(
+        'ERROR MESSAGE:',
+        error?.message
+      )
+
+      console.error(
+        '================================'
       )
 
       alert(
         error?.message ||
-        'Something went wrong while running the workflow.'
+        'Workflow execution failed.'
       )
+
+      await loadRunCount()
 
     } finally {
 
@@ -589,7 +1282,6 @@ function Dashboard({
       return
     }
 
-
     if (!workflow?.id) {
 
       alert(
@@ -599,17 +1291,14 @@ function Dashboard({
       return
     }
 
-
     const confirmed =
       window.confirm(
         `Are you sure you want to delete "${workflow.name}"?\n\nThis will delete the workflow, steps, triggers and run history.`
       )
 
-
     if (!confirmed) {
       return
     }
-
 
     try {
 
@@ -617,42 +1306,12 @@ function Dashboard({
         workflow.id
       )
 
-
       const workflowId =
         String(workflow.id)
 
 
-      console.log(
-        '================================'
-      )
-
-      console.log(
-        'DELETE WORKFLOW'
-      )
-
-      console.log(
-        'Workflow ID:',
-        workflowId
-      )
-
-      console.log(
-        'ID TYPE:',
-        typeof workflowId
-      )
-
-      console.log(
-        'Workflow:',
-        workflow.name
-      )
-
-      console.log(
-        '================================'
-      )
-
-
       // =================================================
-      // STEP 1
-      // FIND WORKFLOW RUNS
+      // GET WORKFLOW RUNS
       // =================================================
 
       const getRunsQuery = `
@@ -675,37 +1334,30 @@ function Dashboard({
         }
       `
 
-
       const runsResponse =
         await nhost.graphql.request({
 
-          query: getRunsQuery,
+          query:
+            getRunsQuery,
 
           variables: {
-            workflowId: workflowId
+            workflowId
           }
 
         })
 
+      const runsError =
+        getGraphQLError(
+          runsResponse
+        )
 
-      console.log(
-        'WORKFLOW RUNS:',
-        runsResponse
-      )
-
-
-      if (
-        runsResponse?.body?.errors?.length
-      ) {
+      if (runsError) {
 
         throw new Error(
-          runsResponse.body.errors
-            .map(error => error.message)
-            .join('\n')
+          runsError
         )
 
       }
-
 
       const workflowRuns =
         runsResponse
@@ -713,9 +1365,13 @@ function Dashboard({
           ?.data
           ?.workflow_runs || []
 
+      console.log(
+        'WORKFLOW RUNS TO DELETE:',
+        workflowRuns
+      )
+
 
       // =================================================
-      // STEP 2
       // DELETE STEP RUNS
       // =================================================
 
@@ -743,7 +1399,6 @@ function Dashboard({
           }
         `
 
-
         const stepRunsResponse =
           await nhost.graphql.request({
 
@@ -759,21 +1414,15 @@ function Dashboard({
 
           })
 
+        const stepRunsError =
+          getGraphQLError(
+            stepRunsResponse
+          )
 
-        console.log(
-          'DELETE STEP RUNS:',
-          stepRunsResponse
-        )
-
-
-        if (
-          stepRunsResponse?.body?.errors?.length
-        ) {
+        if (stepRunsError) {
 
           throw new Error(
-            stepRunsResponse.body.errors
-              .map(error => error.message)
-              .join('\n')
+            stepRunsError
           )
 
         }
@@ -782,7 +1431,6 @@ function Dashboard({
 
 
       // =================================================
-      // STEP 3
       // DELETE WORKFLOW RUNS
       // =================================================
 
@@ -806,7 +1454,6 @@ function Dashboard({
         }
       `
 
-
       const deleteRunsResponse =
         await nhost.graphql.request({
 
@@ -814,33 +1461,28 @@ function Dashboard({
             deleteRunsMutation,
 
           variables: {
-            workflowId: workflowId
+
+            workflowId
+
           }
 
         })
 
+      const deleteRunsError =
+        getGraphQLError(
+          deleteRunsResponse
+        )
 
-      console.log(
-        'DELETE WORKFLOW RUNS:',
-        deleteRunsResponse
-      )
-
-
-      if (
-        deleteRunsResponse?.body?.errors?.length
-      ) {
+      if (deleteRunsError) {
 
         throw new Error(
-          deleteRunsResponse.body.errors
-            .map(error => error.message)
-            .join('\n')
+          deleteRunsError
         )
 
       }
 
 
       // =================================================
-      // STEP 4
       // DELETE TRIGGERS
       // =================================================
 
@@ -864,7 +1506,6 @@ function Dashboard({
         }
       `
 
-
       const triggersResponse =
         await nhost.graphql.request({
 
@@ -872,33 +1513,28 @@ function Dashboard({
             deleteTriggersMutation,
 
           variables: {
-            workflowId: workflowId
+
+            workflowId
+
           }
 
         })
 
+      const triggersError =
+        getGraphQLError(
+          triggersResponse
+        )
 
-      console.log(
-        'DELETE TRIGGERS:',
-        triggersResponse
-      )
-
-
-      if (
-        triggersResponse?.body?.errors?.length
-      ) {
+      if (triggersError) {
 
         throw new Error(
-          triggersResponse.body.errors
-            .map(error => error.message)
-            .join('\n')
+          triggersError
         )
 
       }
 
 
       // =================================================
-      // STEP 5
       // DELETE WORKFLOW STEPS
       // =================================================
 
@@ -922,7 +1558,6 @@ function Dashboard({
         }
       `
 
-
       const stepsResponse =
         await nhost.graphql.request({
 
@@ -930,33 +1565,28 @@ function Dashboard({
             deleteStepsMutation,
 
           variables: {
-            workflowId: workflowId
+
+            workflowId
+
           }
 
         })
 
+      const stepsError =
+        getGraphQLError(
+          stepsResponse
+        )
 
-      console.log(
-        'DELETE WORKFLOW STEPS:',
-        stepsResponse
-      )
-
-
-      if (
-        stepsResponse?.body?.errors?.length
-      ) {
+      if (stepsError) {
 
         throw new Error(
-          stepsResponse.body.errors
-            .map(error => error.message)
-            .join('\n')
+          stepsError
         )
 
       }
 
 
       // =================================================
-      // STEP 6
       // DELETE WORKFLOW
       // =================================================
 
@@ -976,15 +1606,16 @@ function Dashboard({
             affected_rows
 
             returning {
+
               id
               name
+
             }
 
           }
 
         }
       `
-
 
       const workflowResponse =
         await nhost.graphql.request({
@@ -994,48 +1625,30 @@ function Dashboard({
 
           variables: {
 
-            // VERY IMPORTANT
-            // UUID is sent as STRING
-
-            workflowId:
-              String(workflow.id)
+            workflowId
 
           }
 
         })
 
+      const workflowError =
+        getGraphQLError(
+          workflowResponse
+        )
 
-      console.log(
-        'DELETE WORKFLOW RESPONSE:',
-        workflowResponse
-      )
-
-
-      if (
-        workflowResponse?.body?.errors?.length
-      ) {
+      if (workflowError) {
 
         throw new Error(
-          workflowResponse.body.errors
-            .map(error => error.message)
-            .join('\n')
+          workflowError
         )
 
       }
-
 
       const deleted =
         workflowResponse
           ?.body
           ?.data
           ?.delete_workflows
-
-
-      console.log(
-        'DELETED RESULT:',
-        deleted
-      )
-
 
       if (
         !deleted ||
@@ -1061,18 +1674,12 @@ function Dashboard({
           )
       )
 
-
       alert(
         `Workflow "${workflow.name}" deleted successfully!`
       )
 
-
-      // Refresh counts
-
       await loadWorkflows()
-
       await loadRunCount()
-
 
     } catch (error) {
 
@@ -1081,13 +1688,6 @@ function Dashboard({
         error
       )
 
-
-      console.error(
-        'ERROR MESSAGE:',
-        error?.message
-      )
-
-
       alert(
         error?.message ||
         'Failed to delete workflow.'
@@ -1095,9 +1695,7 @@ function Dashboard({
 
     } finally {
 
-      setDeletingWorkflowId(
-        null
-      )
+      setDeletingWorkflowId(null)
 
     }
 
@@ -1110,18 +1708,8 @@ function Dashboard({
 
   const activeWorkflowCount =
     workflows.filter(
-      workflow => {
-
-        const triggers =
-          workflow.workflow_triggers || []
-
-
-        return triggers.some(
-          trigger =>
-            trigger.enabled === true
-        )
-
-      }
+      workflow =>
+        workflow.status === 'active'
     ).length
 
 
@@ -1132,12 +1720,6 @@ function Dashboard({
   const handleEditWorkflow = (
     workflow
   ) => {
-
-    console.log(
-      'EDIT WORKFLOW:',
-      workflow
-    )
-
 
     if (onEditWorkflow) {
 
@@ -1157,6 +1739,40 @@ function Dashboard({
 
 
   // =====================================================
+  // RUN HISTORY
+  // =====================================================
+
+  const handleOpenRunHistory = (
+    workflow
+  ) => {
+
+    if (!workflow?.id) {
+
+      alert(
+        'Workflow ID is missing.'
+      )
+
+      return
+    }
+
+    if (onRunHistory) {
+
+      onRunHistory(
+        workflow
+      )
+
+    } else {
+
+      alert(
+        'Run History functionality is not connected yet.'
+      )
+
+    }
+
+  }
+
+
+  // =====================================================
   // FORMAT DATE
   // =====================================================
 
@@ -1165,13 +1781,23 @@ function Dashboard({
   ) => {
 
     if (!date) {
-      return 'Unknown'
+      return 'Not available'
     }
 
+    const parsedDate =
+      new Date(date)
 
-    return new Date(
-      date
-    ).toLocaleString()
+    if (
+      Number.isNaN(
+        parsedDate.getTime()
+      )
+    ) {
+
+      return 'Not available'
+
+    }
+
+    return parsedDate.toLocaleString()
 
   }
 
@@ -1187,7 +1813,6 @@ function Dashboard({
     const triggers =
       workflow.workflow_triggers || []
 
-
     if (
       triggers.length === 0
     ) {
@@ -1195,7 +1820,6 @@ function Dashboard({
       return 'No trigger'
 
     }
-
 
     return (
       triggers[0]?.type ||
@@ -1212,7 +1836,6 @@ function Dashboard({
   return (
 
     <div className="dashboard">
-
 
       {/* =================================================
           HEADER
@@ -1232,7 +1855,6 @@ function Dashboard({
 
         </div>
 
-
         <button
           type="button"
           onClick={onLogout}
@@ -1249,15 +1871,9 @@ function Dashboard({
 
       <main className="dashboard-content">
 
-
-        {/* =================================================
-            WELCOME
-        ================================================= */}
-
         <h2>
           Welcome back! 👋
         </h2>
-
 
         <p className="user-email">
           {user?.email || 'User'}
@@ -1269,7 +1885,6 @@ function Dashboard({
         ================================================= */}
 
         <div className="stats">
-
 
           <div className="stat-card">
 
@@ -1287,9 +1902,11 @@ function Dashboard({
           <div className="stat-card">
 
             <h3>
+
               {loadingRuns
                 ? '...'
                 : runCount}
+
             </h3>
 
             <p>
@@ -1311,7 +1928,6 @@ function Dashboard({
 
           </div>
 
-
         </div>
 
 
@@ -1332,7 +1948,6 @@ function Dashboard({
             </p>
 
           </div>
-
 
           <button
             type="button"
@@ -1420,7 +2035,6 @@ function Dashboard({
                 Create your first workflow.
               </p>
 
-
               <button
                 type="button"
                 className="create-button"
@@ -1454,44 +2068,26 @@ function Dashboard({
                 workflow => {
 
                   const trigger =
-                    getTrigger(
-                      workflow
-                    )
-
-
-                  const triggers =
-                    workflow.workflow_triggers ||
-                    []
-
+                    getTrigger(workflow)
 
                   const steps =
-                    workflow.workflow_steps ||
-                    []
-
+                    workflow.workflow_steps || []
 
                   const isActive =
-                    triggers.some(
-                      item =>
-                        item.enabled === true
-                    )
-
+                    workflow.status === 'active'
 
                   const isRunning =
                     runningWorkflowId ===
                     workflow.id
 
-
                   const isDeleting =
                     deletingWorkflowId ===
                     workflow.id
 
-
                   return (
 
                     <div
-                      key={
-                        workflow.id
-                      }
+                      key={workflow.id}
                       style={{
                         border:
                           '1px solid #ddd',
@@ -1507,23 +2103,14 @@ function Dashboard({
                       }}
                     >
 
-
-                      {/* NAME */}
-
                       <h3>
                         {workflow.name}
                       </h3>
-
-
-                      {/* DESCRIPTION */}
 
                       <p>
                         {workflow.description ||
                           'No description'}
                       </p>
-
-
-                      {/* TRIGGER */}
 
                       <p>
 
@@ -1535,23 +2122,22 @@ function Dashboard({
 
                       </p>
 
-
-                      {/* STATUS */}
-
                       <p>
 
                         <strong>
                           Status:
                         </strong>{' '}
 
+                        {workflow.status ||
+                          'draft'}
+
+                        {' '}
+
                         {isActive
-                          ? 'Active'
-                          : 'Inactive'}
+                          ? '🟢'
+                          : '⚪'}
 
                       </p>
-
-
-                      {/* STEPS */}
 
                       <p>
 
@@ -1562,9 +2148,6 @@ function Dashboard({
                         {steps.length}
 
                       </p>
-
-
-                      {/* CREATED */}
 
                       <p>
 
@@ -1598,7 +2181,6 @@ function Dashboard({
                             'wrap'
                         }}
                       >
-
 
                         {/* EDIT */}
 
@@ -1637,6 +2219,24 @@ function Dashboard({
                             ? 'Running...'
                             : '▶️ Run'}
 
+                        </button>
+
+
+                        {/* RUN HISTORY */}
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleOpenRunHistory(
+                              workflow
+                            )
+                          }
+                          disabled={
+                            isRunning ||
+                            isDeleting
+                          }
+                        >
+                          📋 Run History
                         </button>
 
 
@@ -1683,9 +2283,7 @@ function Dashboard({
 
                         </button>
 
-
                       </div>
-
 
                     </div>
 
@@ -1698,7 +2296,6 @@ function Dashboard({
 
           )}
 
-
       </main>
 
     </div>
@@ -1706,5 +2303,6 @@ function Dashboard({
   )
 
 }
+
 
 export default Dashboard

@@ -28,3 +28,7 @@ dist-ssr
 .env.*
 !.env.example
 .secrets
+
+# Nhost local files
+.nhost/
+nhost/data/

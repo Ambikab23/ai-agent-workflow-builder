@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import './App.css'
 import { nhost } from './lib/nhost'
+
 import Dashboard from './Dashboard'
 import WorkflowBuilder from './WorkflowBuilder'
-import './App.css'
+import RunHistory from './RunHistory'
 
 function App() {
 
@@ -31,16 +33,18 @@ function App() {
 
 
   // =====================================================
-  // WORKFLOW EDIT STATE
-  // null = create new workflow
-  // object = edit existing workflow
+  // WORKFLOW STATE
   // =====================================================
 
-  const [editingWorkflow, setEditingWorkflow] = useState(null)
+  const [editingWorkflow, setEditingWorkflow] =
+    useState(null)
+
+  const [historyWorkflow, setHistoryWorkflow] =
+    useState(null)
 
 
   // =====================================================
-  // CHECK EXISTING AUTHENTICATION
+  // CHECK AUTH
   // =====================================================
 
   useEffect(() => {
@@ -55,29 +59,13 @@ function App() {
           '========== CHECK AUTH =========='
         )
 
-
-        /*
-          Your installed SDK is @nhost/nhost-js 4.8.0.
-
-          We therefore use optional chaining here so the
-          application does not crash if getSession is not
-          available.
-        */
-
         const storedSession =
           nhost.auth.getSession?.()
-
 
         console.log(
           'STORED SESSION:',
           storedSession
         )
-
-
-        /*
-          If a session exists and contains a user,
-          restore the logged-in state.
-        */
 
         if (
           storedSession &&
@@ -96,7 +84,6 @@ function App() {
 
         }
 
-
       } catch (error) {
 
         console.error(
@@ -104,34 +91,24 @@ function App() {
           error
         )
 
-
         if (mounted) {
-
           setUser(null)
-
         }
-
 
       } finally {
 
         if (mounted) {
-
           setCheckingAuth(false)
-
         }
 
       }
 
     }
 
-
     checkAuth()
 
-
     return () => {
-
       mounted = false
-
     }
 
   }, [])
@@ -146,9 +123,7 @@ function App() {
     e.preventDefault()
 
     setLoading(true)
-
     setMessage('')
-
 
     try {
 
@@ -162,22 +137,18 @@ function App() {
           '========== SIGN UP =========='
         )
 
-
         const response =
           await nhost.auth.signUpEmailPassword({
 
             email: email.trim(),
-
             password
 
           })
-
 
         console.log(
           'SIGNUP RESPONSE:',
           response
         )
-
 
         if (response?.body?.error) {
 
@@ -186,9 +157,7 @@ function App() {
           )
 
           return
-
         }
-
 
         if (response?.error) {
 
@@ -197,22 +166,16 @@ function App() {
           )
 
           return
-
         }
-
 
         setMessage(
           'Account created successfully. Please login.'
         )
 
-
         setIsSignup(false)
-
         setPassword('')
 
-
         return
-
       }
 
 
@@ -224,22 +187,18 @@ function App() {
         '========== LOGIN =========='
       )
 
-
       const response =
         await nhost.auth.signInEmailPassword({
 
           email: email.trim(),
-
           password
 
         })
-
 
       console.log(
         'FULL LOGIN RESPONSE:',
         response
       )
-
 
       console.log(
         'LOGIN RESPONSE BODY:',
@@ -248,7 +207,7 @@ function App() {
 
 
       // =================================================
-      // CHECK LOGIN ERROR
+      // CHECK ERROR
       // =================================================
 
       if (response?.body?.error) {
@@ -258,16 +217,12 @@ function App() {
           response.body.error
         )
 
-
         setMessage(
           response.body.error.message
         )
 
-
         return
-
       }
-
 
       if (response?.error) {
 
@@ -276,14 +231,11 @@ function App() {
           response.error
         )
 
-
         setMessage(
           response.error.message
         )
 
-
         return
-
       }
 
 
@@ -294,44 +246,32 @@ function App() {
       const session =
         response?.body?.session
 
-
       console.log(
         'LOGIN SESSION:',
         session
       )
 
-
       if (!session) {
-
-        console.error(
-          'NO SESSION:',
-          response
-        )
-
 
         setMessage(
           'Login failed. Nhost did not return a session.'
         )
 
-
         return
-
       }
 
 
       // =================================================
-      // GET USER FROM SESSION
+      // GET USER
       // =================================================
 
       const loggedInUser =
         session.user
 
-
       console.log(
         'LOGGED IN USER:',
         loggedInUser
       )
-
 
       if (!loggedInUser) {
 
@@ -339,9 +279,7 @@ function App() {
           'Login succeeded, but no user was returned.'
         )
 
-
         return
-
       }
 
 
@@ -349,40 +287,26 @@ function App() {
       // SAVE USER
       // =================================================
 
-      setUser(
-        loggedInUser
-      )
+      setUser(loggedInUser)
 
+      setPage('dashboard')
 
-      // Always go to dashboard after login
+      setEditingWorkflow(null)
 
-      setPage(
-        'dashboard'
-      )
-
-
-      // Clear any previous edit
-
-      setEditingWorkflow(
-        null
-      )
-
+      setHistoryWorkflow(null)
 
       setPassword('')
 
       setMessage('')
 
-
       console.log(
         '========== LOGIN SUCCESS =========='
       )
-
 
       console.log(
         'USER ID:',
         loggedInUser.id
       )
-
 
       console.log(
         'USER EMAIL:',
@@ -395,7 +319,6 @@ function App() {
         'AUTHENTICATION EXCEPTION:',
         error
       )
-
 
       setMessage(
         error?.message ||
@@ -421,14 +344,11 @@ function App() {
       '========== LOGOUT =========='
     )
 
-
     setLoading(true)
-
 
     try {
 
       await nhost.auth.signOut()
-
 
       console.log(
         'Nhost logout successful'
@@ -443,18 +363,13 @@ function App() {
 
     } finally {
 
-      /*
-        Clear everything immediately.
-
-        This makes the login page appear without requiring
-        a browser refresh.
-      */
-
       setUser(null)
 
       setPage('dashboard')
 
       setEditingWorkflow(null)
+
+      setHistoryWorkflow(null)
 
       setEmail('')
 
@@ -463,7 +378,6 @@ function App() {
       setMessage('')
 
       setLoading(false)
-
 
       console.log(
         '========== LOGOUT COMPLETE =========='
@@ -475,7 +389,7 @@ function App() {
 
 
   // =====================================================
-  // CREATE NEW WORKFLOW
+  // CREATE WORKFLOW
   // =====================================================
 
   const handleCreateWorkflow = () => {
@@ -484,26 +398,19 @@ function App() {
       '========== CREATE WORKFLOW =========='
     )
 
-
     console.log(
       'CURRENT USER:',
       user
     )
-
 
     console.log(
       'CURRENT USER ID:',
       user?.id
     )
 
-
-    /*
-      Dashboard is only rendered when user exists.
-
-      Therefore we do not need another login check here.
-    */
-
     setEditingWorkflow(null)
+
+    setHistoryWorkflow(null)
 
     setPage('workflow')
 
@@ -511,7 +418,7 @@ function App() {
 
 
   // =====================================================
-  // EDIT EXISTING WORKFLOW
+  // EDIT WORKFLOW
   // =====================================================
 
   const handleEditWorkflow = (workflow) => {
@@ -520,37 +427,59 @@ function App() {
       '========== EDIT WORKFLOW =========='
     )
 
-
     console.log(
       'SELECTED WORKFLOW:',
       workflow
     )
-
 
     console.log(
       'WORKFLOW ID:',
       workflow?.id
     )
 
+    setEditingWorkflow(workflow)
 
-    /*
-      Store the selected workflow.
+    setHistoryWorkflow(null)
 
-      WorkflowBuilder will use this object to populate:
+    setPage('workflow')
 
-      - Name
-      - Description
-      - Trigger
-    */
+  }
 
-    setEditingWorkflow(
+
+  // =====================================================
+  // OPEN RUN HISTORY
+  // =====================================================
+
+  const handleRunHistory = (workflow) => {
+
+    console.log(
+      '========== RUN HISTORY =========='
+    )
+
+    console.log(
+      'SELECTED WORKFLOW:',
       workflow
     )
 
-
-    setPage(
-      'workflow'
+    console.log(
+      'WORKFLOW ID:',
+      workflow?.id
     )
+
+    if (!workflow?.id) {
+
+      alert(
+        'Workflow ID is missing.'
+      )
+
+      return
+    }
+
+    setHistoryWorkflow(workflow)
+
+    setEditingWorkflow(null)
+
+    setPage('run-history')
 
   }
 
@@ -565,15 +494,11 @@ function App() {
       '========== BACK TO DASHBOARD =========='
     )
 
+    setEditingWorkflow(null)
 
-    setEditingWorkflow(
-      null
-    )
+    setHistoryWorkflow(null)
 
-
-    setPage(
-      'dashboard'
-    )
+    setPage('dashboard')
 
   }
 
@@ -594,16 +519,13 @@ function App() {
             ⚡
           </div>
 
-
           <h1>
             AI Agent
           </h1>
 
-
           <h1 className="title-second">
             Workflow Builder
           </h1>
-
 
           <p className="subtitle">
             Checking your session...
@@ -634,12 +556,10 @@ function App() {
         'RENDERING WORKFLOW BUILDER'
       )
 
-
       console.log(
         'EDITING WORKFLOW:',
         editingWorkflow
       )
-
 
       return (
 
@@ -659,13 +579,42 @@ function App() {
 
 
     // ===================================================
+    // RUN HISTORY
+    // ===================================================
+
+    if (page === 'run-history') {
+
+      console.log(
+        'RENDERING RUN HISTORY'
+      )
+
+      console.log(
+        'HISTORY WORKFLOW:',
+        historyWorkflow
+      )
+
+      return (
+
+        <RunHistory
+
+          workflow={historyWorkflow}
+
+          onBack={handleBack}
+
+        />
+
+      )
+
+    }
+
+
+    // ===================================================
     // DASHBOARD
     // ===================================================
 
     console.log(
       'RENDERING DASHBOARD'
     )
-
 
     return (
 
@@ -681,6 +630,10 @@ function App() {
 
         onEditWorkflow={
           handleEditWorkflow
+        }
+
+        onRunHistory={
+          handleRunHistory
         }
 
       />
@@ -700,26 +653,25 @@ function App() {
 
       <div className="auth-card">
 
-        {/* Logo */}
+        {/* LOGO */}
 
         <div className="logo">
           ⚡
         </div>
 
 
-        {/* Title */}
+        {/* TITLE */}
 
         <h1>
           AI Agent
         </h1>
-
 
         <h1 className="title-second">
           Workflow Builder
         </h1>
 
 
-        {/* Subtitle */}
+        {/* SUBTITLE */}
 
         <p className="subtitle">
 
@@ -730,16 +682,15 @@ function App() {
         </p>
 
 
-        {/* Login / Signup Form */}
+        {/* FORM */}
 
         <form onSubmit={handleSubmit}>
 
-          {/* Email */}
+          {/* EMAIL */}
 
           <label>
             Email
           </label>
-
 
           <input
             type="email"
@@ -753,12 +704,11 @@ function App() {
           />
 
 
-          {/* Password */}
+          {/* PASSWORD */}
 
           <label>
             Password
           </label>
-
 
           <input
             type="password"
@@ -772,7 +722,7 @@ function App() {
           />
 
 
-          {/* Login / Signup button */}
+          {/* LOGIN / SIGNUP */}
 
           <button
             className="primary-button"
@@ -781,13 +731,9 @@ function App() {
           >
 
             {loading
-
               ? 'Please wait...'
-
               : isSignup
-
                 ? 'Create Account'
-
                 : 'Login'}
 
           </button>
@@ -795,20 +741,18 @@ function App() {
         </form>
 
 
-        {/* Error / Success message */}
+        {/* MESSAGE */}
 
         {message && (
 
           <p className="message">
-
             {message}
-
           </p>
 
         )}
 
 
-        {/* Switch Login / Signup */}
+        {/* SWITCH */}
 
         <button
           className="switch-button"
@@ -828,9 +772,7 @@ function App() {
         >
 
           {isSignup
-
             ? 'Already have an account? Login'
-
             : "Don't have an account? Sign Up"}
 
         </button>
@@ -842,6 +784,5 @@ function App() {
   )
 
 }
-
 
 export default App
