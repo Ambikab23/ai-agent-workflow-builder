@@ -1,0 +1,57 @@
+table:
+  name: workflow_runs
+  schema: public
+object_relationships:
+  - name: workflow
+    using:
+      foreign_key_constraint_on: workflow_id
+array_relationships:
+  - name: step_runs
+    using:
+      foreign_key_constraint_on:
+        column: workflow_run_id
+        table:
+          name: step_runs
+          schema: public
+insert_permissions:
+  - role: user
+    permission:
+      check: {}
+      columns:
+        - status
+        - completed_at
+        - created_at
+        - started_at
+        - id
+        - workflow_id
+    comment: ""
+select_permissions:
+  - role: user
+    permission:
+      columns:
+        - status
+        - completed_at
+        - created_at
+        - started_at
+        - id
+        - workflow_id
+      filter: {}
+    comment: ""
+update_permissions:
+  - role: user
+    permission:
+      columns:
+        - status
+        - completed_at
+        - created_at
+        - started_at
+        - id
+        - workflow_id
+      filter: {}
+      check: {}
+    comment: ""
+delete_permissions:
+  - role: user
+    permission:
+      filter: {}
+    comment: ""

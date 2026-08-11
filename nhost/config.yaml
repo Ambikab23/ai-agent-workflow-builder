@@ -1,0 +1,6 @@
+version: 3
+endpoint: http://graphql:8080
+metadata_directory: hasura/metadata
+migrations_directory: hasura/migrations
+seeds_directory: hasura/seeds
+actions_directory: hasura/actions
