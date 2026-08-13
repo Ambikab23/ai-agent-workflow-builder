@@ -8,33 +8,28 @@ import RunHistory from './RunHistory'
 
 function App() {
 
-  // =====================================================
-  // AUTH STATE
-  // =====================================================
-
   const [user, setUser] = useState(null)
 
-  const [isSignup, setIsSignup] = useState(false)
+  const [isSignup, setIsSignup] =
+    useState(false)
 
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [email, setEmail] =
+    useState('')
 
-  const [loading, setLoading] = useState(false)
-  const [checkingAuth, setCheckingAuth] = useState(true)
+  const [password, setPassword] =
+    useState('')
 
-  const [message, setMessage] = useState('')
+  const [loading, setLoading] =
+    useState(false)
 
+  const [checkingAuth, setCheckingAuth] =
+    useState(true)
 
-  // =====================================================
-  // PAGE STATE
-  // =====================================================
+  const [message, setMessage] =
+    useState('')
 
-  const [page, setPage] = useState('dashboard')
-
-
-  // =====================================================
-  // WORKFLOW STATE
-  // =====================================================
+  const [page, setPage] =
+    useState('dashboard')
 
   const [editingWorkflow, setEditingWorkflow] =
     useState(null)
@@ -42,9 +37,11 @@ function App() {
   const [historyWorkflow, setHistoryWorkflow] =
     useState(null)
 
+  const [dashboardRefreshKey, setDashboardRefreshKey] =
+    useState(0)
 
   // =====================================================
-  // CHECK AUTH
+  // AUTH CHECK
   // =====================================================
 
   useEffect(() => {
@@ -55,32 +52,21 @@ function App() {
 
       try {
 
-        console.log(
-          '========== CHECK AUTH =========='
-        )
-
-        const storedSession =
+        const session =
           nhost.auth.getSession?.()
 
-        console.log(
-          'STORED SESSION:',
-          storedSession
-        )
-
         if (
-          storedSession &&
-          storedSession.user
+          session?.user &&
+          mounted
         ) {
 
-          if (mounted) {
+          setUser(
+            session.user
+          )
 
-            setUser(
-              storedSession.user
-            )
-
-            setPage('dashboard')
-
-          }
+          setPage(
+            'dashboard'
+          )
 
         }
 
@@ -113,12 +99,11 @@ function App() {
 
   }, [])
 
-
   // =====================================================
   // LOGIN / SIGNUP
   // =====================================================
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async e => {
 
     e.preventDefault()
 
@@ -127,28 +112,18 @@ function App() {
 
     try {
 
-      // =================================================
-      // SIGN UP
-      // =================================================
-
       if (isSignup) {
 
-        console.log(
-          '========== SIGN UP =========='
-        )
-
         const response =
-          await nhost.auth.signUpEmailPassword({
+          await nhost.auth
+            .signUpEmailPassword({
 
-            email: email.trim(),
-            password
+              email:
+                email.trim(),
 
-          })
+              password
 
-        console.log(
-          'SIGNUP RESPONSE:',
-          response
-        )
+            })
 
         if (response?.body?.error) {
 
@@ -178,44 +153,18 @@ function App() {
         return
       }
 
-
-      // =================================================
-      // LOGIN
-      // =================================================
-
-      console.log(
-        '========== LOGIN =========='
-      )
-
       const response =
-        await nhost.auth.signInEmailPassword({
+        await nhost.auth
+          .signInEmailPassword({
 
-          email: email.trim(),
-          password
+            email:
+              email.trim(),
 
-        })
+            password
 
-      console.log(
-        'FULL LOGIN RESPONSE:',
-        response
-      )
-
-      console.log(
-        'LOGIN RESPONSE BODY:',
-        response?.body
-      )
-
-
-      // =================================================
-      // CHECK ERROR
-      // =================================================
+          })
 
       if (response?.body?.error) {
-
-        console.error(
-          'LOGIN ERROR:',
-          response.body.error
-        )
 
         setMessage(
           response.body.error.message
@@ -226,11 +175,6 @@ function App() {
 
       if (response?.error) {
 
-        console.error(
-          'LOGIN ERROR:',
-          response.error
-        )
-
         setMessage(
           response.error.message
         )
@@ -238,18 +182,8 @@ function App() {
         return
       }
 
-
-      // =================================================
-      // GET SESSION
-      // =================================================
-
       const session =
         response?.body?.session
-
-      console.log(
-        'LOGIN SESSION:',
-        session
-      )
 
       if (!session) {
 
@@ -260,18 +194,8 @@ function App() {
         return
       }
 
-
-      // =================================================
-      // GET USER
-      // =================================================
-
       const loggedInUser =
         session.user
-
-      console.log(
-        'LOGGED IN USER:',
-        loggedInUser
-      )
 
       if (!loggedInUser) {
 
@@ -282,47 +206,34 @@ function App() {
         return
       }
 
+      setUser(
+        loggedInUser
+      )
 
-      // =================================================
-      // SAVE USER
-      // =================================================
-
-      setUser(loggedInUser)
-
-      setPage('dashboard')
+      setPage(
+        'dashboard'
+      )
 
       setEditingWorkflow(null)
-
       setHistoryWorkflow(null)
-
       setPassword('')
-
       setMessage('')
 
-      console.log(
-        '========== LOGIN SUCCESS =========='
-      )
-
-      console.log(
-        'USER ID:',
-        loggedInUser.id
-      )
-
-      console.log(
-        'USER EMAIL:',
-        loggedInUser.email
+      setDashboardRefreshKey(
+        previous =>
+          previous + 1
       )
 
     } catch (error) {
 
       console.error(
-        'AUTHENTICATION EXCEPTION:',
+        'AUTH ERROR:',
         error
       )
 
       setMessage(
         error?.message ||
-        'Something went wrong during authentication.'
+        'Authentication failed.'
       )
 
     } finally {
@@ -333,26 +244,17 @@ function App() {
 
   }
 
-
   // =====================================================
   // LOGOUT
   // =====================================================
 
   const handleLogout = async () => {
 
-    console.log(
-      '========== LOGOUT =========='
-    )
-
     setLoading(true)
 
     try {
 
       await nhost.auth.signOut()
-
-      console.log(
-        'Nhost logout successful'
-      )
 
     } catch (error) {
 
@@ -364,147 +266,91 @@ function App() {
     } finally {
 
       setUser(null)
-
       setPage('dashboard')
-
       setEditingWorkflow(null)
-
       setHistoryWorkflow(null)
-
       setEmail('')
-
       setPassword('')
-
       setMessage('')
-
+      setDashboardRefreshKey(0)
       setLoading(false)
-
-      console.log(
-        '========== LOGOUT COMPLETE =========='
-      )
 
     }
 
   }
 
-
   // =====================================================
-  // CREATE WORKFLOW
+  // CREATE
   // =====================================================
 
   const handleCreateWorkflow = () => {
 
-    console.log(
-      '========== CREATE WORKFLOW =========='
-    )
-
-    console.log(
-      'CURRENT USER:',
-      user
-    )
-
-    console.log(
-      'CURRENT USER ID:',
-      user?.id
-    )
-
     setEditingWorkflow(null)
-
     setHistoryWorkflow(null)
-
     setPage('workflow')
 
   }
 
-
   // =====================================================
-  // EDIT WORKFLOW
-  // =====================================================
-
-  const handleEditWorkflow = (workflow) => {
-
-    console.log(
-      '========== EDIT WORKFLOW =========='
-    )
-
-    console.log(
-      'SELECTED WORKFLOW:',
-      workflow
-    )
-
-    console.log(
-      'WORKFLOW ID:',
-      workflow?.id
-    )
-
-    setEditingWorkflow(workflow)
-
-    setHistoryWorkflow(null)
-
-    setPage('workflow')
-
-  }
-
-
-  // =====================================================
-  // OPEN RUN HISTORY
+  // EDIT
   // =====================================================
 
-  const handleRunHistory = (workflow) => {
+  const handleEditWorkflow =
+    workflow => {
 
-    console.log(
-      '========== RUN HISTORY =========='
-    )
-
-    console.log(
-      'SELECTED WORKFLOW:',
-      workflow
-    )
-
-    console.log(
-      'WORKFLOW ID:',
-      workflow?.id
-    )
-
-    if (!workflow?.id) {
-
-      alert(
-        'Workflow ID is missing.'
+      setEditingWorkflow(
+        workflow
       )
 
-      return
+      setHistoryWorkflow(null)
+      setPage('workflow')
+
     }
 
-    setHistoryWorkflow(workflow)
+  // =====================================================
+  // HISTORY
+  // =====================================================
 
-    setEditingWorkflow(null)
+  const handleRunHistory =
+    workflow => {
 
-    setPage('run-history')
+      if (!workflow?.id) {
 
-  }
+        alert(
+          'Workflow ID is missing.'
+        )
 
+        return
+      }
+
+      setHistoryWorkflow(
+        workflow
+      )
+
+      setEditingWorkflow(null)
+      setPage('run-history')
+
+    }
 
   // =====================================================
-  // BACK TO DASHBOARD
+  // BACK
   // =====================================================
 
   const handleBack = () => {
 
-    console.log(
-      '========== BACK TO DASHBOARD =========='
+    setDashboardRefreshKey(
+      previous =>
+        previous + 1
     )
 
     setEditingWorkflow(null)
-
     setHistoryWorkflow(null)
-
     setPage('dashboard')
 
   }
 
-
   // =====================================================
-  // AUTH CHECK SCREEN
+  // AUTH SCREEN
   // =====================================================
 
   if (checkingAuth) {
@@ -539,90 +385,52 @@ function App() {
 
   }
 
-
   // =====================================================
-  // LOGGED-IN APPLICATION
+  // LOGGED IN
   // =====================================================
 
   if (user) {
 
-    // ===================================================
-    // WORKFLOW BUILDER
-    // ===================================================
-
     if (page === 'workflow') {
-
-      console.log(
-        'RENDERING WORKFLOW BUILDER'
-      )
-
-      console.log(
-        'EDITING WORKFLOW:',
-        editingWorkflow
-      )
 
       return (
 
         <WorkflowBuilder
-
           user={user}
-
           workflow={editingWorkflow}
-
           onBack={handleBack}
-
         />
 
       )
 
     }
 
-
-    // ===================================================
-    // RUN HISTORY
-    // ===================================================
-
     if (page === 'run-history') {
-
-      console.log(
-        'RENDERING RUN HISTORY'
-      )
-
-      console.log(
-        'HISTORY WORKFLOW:',
-        historyWorkflow
-      )
 
       return (
 
         <RunHistory
-
           workflow={historyWorkflow}
-
           onBack={handleBack}
-
         />
 
       )
 
     }
-
-
-    // ===================================================
-    // DASHBOARD
-    // ===================================================
-
-    console.log(
-      'RENDERING DASHBOARD'
-    )
 
     return (
 
       <Dashboard
 
+        key={
+          dashboardRefreshKey
+        }
+
         user={user}
 
-        onLogout={handleLogout}
+        onLogout={
+          handleLogout
+        }
 
         onCreateWorkflow={
           handleCreateWorkflow
@@ -636,15 +444,18 @@ function App() {
           handleRunHistory
         }
 
+        refreshKey={
+          dashboardRefreshKey
+        }
+
       />
 
     )
 
   }
 
-
   // =====================================================
-  // LOGIN / SIGNUP PAGE
+  // LOGIN
   // =====================================================
 
   return (
@@ -653,14 +464,9 @@ function App() {
 
       <div className="auth-card">
 
-        {/* LOGO */}
-
         <div className="logo">
           ⚡
         </div>
-
-
-        {/* TITLE */}
 
         <h1>
           AI Agent
@@ -670,9 +476,6 @@ function App() {
           Workflow Builder
         </h1>
 
-
-        {/* SUBTITLE */}
-
         <p className="subtitle">
 
           {isSignup
@@ -681,12 +484,11 @@ function App() {
 
         </p>
 
-
-        {/* FORM */}
-
-        <form onSubmit={handleSubmit}>
-
-          {/* EMAIL */}
+        <form
+          onSubmit={
+            handleSubmit
+          }
+        >
 
           <label>
             Email
@@ -696,15 +498,14 @@ function App() {
             type="email"
             placeholder="Enter your email"
             value={email}
-            onChange={(e) =>
-              setEmail(e.target.value)
+            onChange={e =>
+              setEmail(
+                e.target.value
+              )
             }
             disabled={loading}
             required
           />
-
-
-          {/* PASSWORD */}
 
           <label>
             Password
@@ -714,15 +515,14 @@ function App() {
             type="password"
             placeholder="Enter your password"
             value={password}
-            onChange={(e) =>
-              setPassword(e.target.value)
+            onChange={e =>
+              setPassword(
+                e.target.value
+              )
             }
             disabled={loading}
             required
           />
-
-
-          {/* LOGIN / SIGNUP */}
 
           <button
             className="primary-button"
@@ -740,9 +540,6 @@ function App() {
 
         </form>
 
-
-        {/* MESSAGE */}
-
         {message && (
 
           <p className="message">
@@ -751,9 +548,6 @@ function App() {
 
         )}
 
-
-        {/* SWITCH */}
-
         <button
           className="switch-button"
           type="button"
@@ -761,11 +555,11 @@ function App() {
           onClick={() => {
 
             setIsSignup(
-              !isSignup
+              previous =>
+                !previous
             )
 
             setMessage('')
-
             setPassword('')
 
           }}

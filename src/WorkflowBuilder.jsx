@@ -1,8 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './WorkflowBuilder.css'
 import { nhost } from './lib/nhost'
 
-function WorkflowBuilder({ user, onBack }) {
+const ORGANIZATION_ID =
+  'c55609d5-c8d3-491c-8de6-a787b5a2e109'
+
+function WorkflowBuilder({
+  user,
+  workflow,
+  onBack
+}) {
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -10,13 +17,114 @@ function WorkflowBuilder({ user, onBack }) {
   const [steps, setSteps] = useState([])
   const [loading, setLoading] = useState(false)
 
+  const isEditMode = Boolean(workflow?.id)
+
   // =====================================================
-  // CORRECT ORGANIZATION ID
+  // GRAPHQL ERROR HANDLER
   // =====================================================
 
-  const ORGANIZATION_ID =
-    'b5e42b9c-cb68-4bdc-9a06-cc3bf013cb58'
+  const getGraphQLError = response => {
 
+    if (response?.body?.errors?.length) {
+
+      return response.body.errors
+        .map(error => error.message)
+        .join('\n')
+
+    }
+
+    return null
+  }
+
+  // =====================================================
+  // LOAD EXISTING WORKFLOW
+  // =====================================================
+
+  useEffect(() => {
+
+    if (!workflow?.id) {
+
+      setName('')
+      setDescription('')
+      setTriggerType('manual')
+      setSteps([])
+
+      return
+    }
+
+    setName(workflow.name || '')
+    setDescription(workflow.description || '')
+
+    const trigger =
+      workflow.workflow_triggers?.[0]
+
+    setTriggerType(
+      trigger?.type || 'manual'
+    )
+
+    const existingSteps =
+      workflow.workflow_steps || []
+
+    /*
+      IMPORTANT:
+
+      step_order exists in the database and is NOT NULL.
+
+      Therefore we use step_order to preserve the
+      workflow step order.
+    */
+
+    const formattedSteps =
+      [...existingSteps]
+        .sort(
+          (a, b) =>
+            Number(a.step_order || 0) -
+            Number(b.step_order || 0)
+        )
+        .map(step => {
+
+          let config = step.config
+
+          if (
+            typeof config === 'string'
+          ) {
+
+            try {
+
+              config =
+                JSON.parse(config)
+
+            } catch {
+
+              config = {
+                prompt: config
+              }
+
+            }
+
+          }
+
+          return {
+
+            id:
+              step.id,
+
+            name:
+              step.name || '',
+
+            type:
+              step.type || 'llm_call',
+
+            config:
+              config?.prompt || ''
+
+          }
+
+        })
+
+    setSteps(formattedSteps)
+
+  }, [workflow])
 
   // =====================================================
   // ADD STEP
@@ -24,61 +132,896 @@ function WorkflowBuilder({ user, onBack }) {
 
   const addStep = () => {
 
-    const newStep = {
-      id: Date.now(),
-      name: `Step ${steps.length + 1}`,
-      type: 'llm_call',
-      config: ''
-    }
+    setSteps(previous => [
 
-    setSteps(previousSteps => [
-      ...previousSteps,
-      newStep
+      ...previous,
+
+      {
+
+        id:
+          `new-${Date.now()}`,
+
+        name:
+          `Step ${previous.length + 1}`,
+
+        type:
+          'llm_call',
+
+        config:
+          ''
+
+      }
+
     ])
-  }
 
+  }
 
   // =====================================================
   // UPDATE STEP
   // =====================================================
 
-  const updateStep = (id, field, value) => {
+  const updateStep = (
+    id,
+    field,
+    value
+  ) => {
 
-    setSteps(previousSteps =>
-      previousSteps.map(step => {
-
-        if (step.id === id) {
-
-          return {
-            ...step,
-            [field]: value
-          }
-
-        }
-
-        return step
-
-      })
+    setSteps(previous =>
+      previous.map(step =>
+        step.id === id
+          ? {
+              ...step,
+              [field]: value
+            }
+          : step
+      )
     )
-  }
 
+  }
 
   // =====================================================
   // REMOVE STEP
   // =====================================================
 
-  const removeStep = (id) => {
+  const removeStep = id => {
 
-    setSteps(previousSteps =>
-      previousSteps.filter(
-        step => step.id !== id
+    setSteps(previous =>
+      previous.filter(
+        step =>
+          step.id !== id
       )
     )
+
   }
 
+  // =====================================================
+  // CREATE WORKFLOW
+  // =====================================================
+
+  const createWorkflow = async () => {
+
+    // ===================================================
+    // CREATE WORKFLOW
+    // ===================================================
+
+    const workflowMutation = `
+      mutation CreateWorkflow(
+        $orgId: uuid!
+        $name: String!
+        $description: String
+      ) {
+
+        insert_workflows_one(
+          object: {
+            org_id: $orgId
+            name: $name
+            description: $description
+          }
+        ) {
+
+          id
+          org_id
+          name
+          description
+          created_at
+          updated_at
+
+        }
+
+      }
+    `
+
+    const workflowResponse =
+      await nhost.graphql.request({
+
+        query:
+          workflowMutation,
+
+        variables: {
+
+          orgId:
+            ORGANIZATION_ID,
+
+          name:
+            name.trim(),
+
+          description:
+            description.trim() || null
+
+        }
+
+      })
+
+    const workflowError =
+      getGraphQLError(
+        workflowResponse
+      )
+
+    if (workflowError) {
+
+      throw new Error(
+        workflowError
+      )
+
+    }
+
+    const createdWorkflow =
+      workflowResponse
+        ?.body
+        ?.data
+        ?.insert_workflows_one
+
+    if (!createdWorkflow) {
+
+      throw new Error(
+        'Workflow was not created.'
+      )
+
+    }
+
+    // ===================================================
+    // CREATE TRIGGER
+    // ===================================================
+
+    const triggerMutation = `
+      mutation CreateTrigger(
+        $workflowId: uuid!
+        $type: String!
+        $config: jsonb!
+      ) {
+
+        insert_workflow_triggers_one(
+          object: {
+            workflow_id: $workflowId
+            type: $type
+            config: $config
+          }
+        ) {
+
+          id
+          workflow_id
+          type
+          config
+
+        }
+
+      }
+    `
+
+    const triggerResponse =
+      await nhost.graphql.request({
+
+        query:
+          triggerMutation,
+
+        variables: {
+
+          workflowId:
+            createdWorkflow.id,
+
+          type:
+            triggerType,
+
+          config:
+            {}
+
+        }
+
+      })
+
+    const triggerError =
+      getGraphQLError(
+        triggerResponse
+      )
+
+    if (triggerError) {
+
+      throw new Error(
+        `Trigger creation failed:\n${triggerError}`
+      )
+
+    }
+
+    // ===================================================
+    // CREATE STEPS
+    // ===================================================
+
+    for (
+      let index = 0;
+      index < steps.length;
+      index++
+    ) {
+
+      const step =
+        steps[index]
+
+      /*
+        IMPORTANT:
+
+        step_order is NOT NULL in PostgreSQL.
+
+        Therefore every inserted step MUST receive
+        a step_order value.
+
+        First step  -> 1
+        Second step -> 2
+        Third step  -> 3
+        etc.
+      */
+
+      const stepMutation = `
+        mutation CreateWorkflowStep(
+          $workflowId: uuid!
+          $name: String!
+          $stepOrder: Int!
+          $type: String!
+          $config: jsonb!
+        ) {
+
+          insert_workflow_steps_one(
+            object: {
+              workflow_id: $workflowId
+              name: $name
+              step_order: $stepOrder
+              type: $type
+              config: $config
+            }
+          ) {
+
+            id
+            workflow_id
+            name
+            step_order
+            type
+            config
+            created_at
+
+          }
+
+        }
+      `
+
+      const stepResponse =
+        await nhost.graphql.request({
+
+          query:
+            stepMutation,
+
+          variables: {
+
+            workflowId:
+              createdWorkflow.id,
+
+            name:
+              step.name.trim() ||
+              `Step ${index + 1}`,
+
+            stepOrder:
+              index + 1,
+
+            type:
+              step.type,
+
+            config: {
+
+              prompt:
+                step.config || ''
+
+            }
+
+          }
+
+        })
+
+      const stepError =
+        getGraphQLError(
+          stepResponse
+        )
+
+      if (stepError) {
+
+        throw new Error(
+          `Step ${index + 1} creation failed:\n${stepError}`
+        )
+
+      }
+
+    }
+
+    return createdWorkflow
+
+  }
 
   // =====================================================
-  // SAVE WORKFLOW
+  // UPDATE WORKFLOW
+  // =====================================================
+
+  const updateWorkflow = async () => {
+
+    const workflowId =
+      String(workflow.id)
+
+    // ===================================================
+    // UPDATE WORKFLOW
+    // ===================================================
+
+    const updateMutation = `
+      mutation UpdateWorkflow(
+        $workflowId: uuid!
+        $name: String!
+        $description: String
+      ) {
+
+        update_workflows_by_pk(
+          pk_columns: {
+            id: $workflowId
+          }
+
+          _set: {
+            name: $name
+            description: $description
+          }
+        ) {
+
+          id
+          org_id
+          name
+          description
+          created_at
+          updated_at
+
+        }
+
+      }
+    `
+
+    const response =
+      await nhost.graphql.request({
+
+        query:
+          updateMutation,
+
+        variables: {
+
+          workflowId,
+
+          name:
+            name.trim(),
+
+          description:
+            description.trim() || null
+
+        }
+
+      })
+
+    const error =
+      getGraphQLError(response)
+
+    if (error) {
+
+      throw new Error(error)
+
+    }
+
+    const updatedWorkflow =
+      response
+        ?.body
+        ?.data
+        ?.update_workflows_by_pk
+
+    if (!updatedWorkflow) {
+
+      throw new Error(
+        'Workflow was not updated.'
+      )
+
+    }
+
+    // ===================================================
+    // TRIGGER
+    // ===================================================
+
+    const existingTrigger =
+      workflow.workflow_triggers?.[0]
+
+    if (existingTrigger?.id) {
+
+      const updateTriggerMutation = `
+        mutation UpdateTrigger(
+          $id: uuid!
+          $type: String!
+          $config: jsonb!
+        ) {
+
+          update_workflow_triggers_by_pk(
+            pk_columns: {
+              id: $id
+            }
+
+            _set: {
+              type: $type
+              config: $config
+            }
+          ) {
+
+            id
+            workflow_id
+            type
+            config
+
+          }
+
+        }
+      `
+
+      const triggerResponse =
+        await nhost.graphql.request({
+
+          query:
+            updateTriggerMutation,
+
+          variables: {
+
+            id:
+              existingTrigger.id,
+
+            type:
+              triggerType,
+
+            config:
+              {}
+
+          }
+
+        })
+
+      const triggerError =
+        getGraphQLError(
+          triggerResponse
+        )
+
+      if (triggerError) {
+
+        throw new Error(
+          `Trigger update failed:\n${triggerError}`
+        )
+
+      }
+
+    } else {
+
+      const createTriggerMutation = `
+        mutation CreateTrigger(
+          $workflowId: uuid!
+          $type: String!
+          $config: jsonb!
+        ) {
+
+          insert_workflow_triggers_one(
+            object: {
+              workflow_id: $workflowId
+              type: $type
+              config: $config
+            }
+          ) {
+
+            id
+            workflow_id
+            type
+            config
+
+          }
+
+        }
+      `
+
+      const triggerResponse =
+        await nhost.graphql.request({
+
+          query:
+            createTriggerMutation,
+
+          variables: {
+
+            workflowId,
+
+            type:
+              triggerType,
+
+            config:
+              {}
+
+          }
+
+        })
+
+      const triggerError =
+        getGraphQLError(
+          triggerResponse
+        )
+
+      if (triggerError) {
+
+        throw new Error(
+          `Trigger creation failed:\n${triggerError}`
+        )
+
+      }
+
+    }
+
+    // ===================================================
+    // GET EXISTING STEPS
+    // ===================================================
+
+    const stepsQuery = `
+      query GetWorkflowSteps(
+        $workflowId: uuid!
+      ) {
+
+        workflow_steps(
+          where: {
+            workflow_id: {
+              _eq: $workflowId
+            }
+          }
+
+          order_by: {
+            step_order: asc
+          }
+        ) {
+
+          id
+          workflow_id
+          name
+          step_order
+          type
+          config
+          created_at
+
+        }
+
+      }
+    `
+
+    const stepsResponse =
+      await nhost.graphql.request({
+
+        query:
+          stepsQuery,
+
+        variables: {
+          workflowId
+        }
+
+      })
+
+    const stepsError =
+      getGraphQLError(
+        stepsResponse
+      )
+
+    if (stepsError) {
+
+      throw new Error(
+        stepsError
+      )
+
+    }
+
+    const existingSteps =
+      stepsResponse
+        ?.body
+        ?.data
+        ?.workflow_steps || []
+
+    // ===================================================
+    // DELETE REMOVED STEPS
+    // ===================================================
+
+    const currentStepIds =
+      new Set(
+        steps
+          .filter(
+            step =>
+              !String(step.id)
+                .startsWith('new-')
+          )
+          .map(
+            step =>
+              String(step.id)
+          )
+      )
+
+    for (
+      const existingStep
+      of existingSteps
+    ) {
+
+      if (
+        !currentStepIds.has(
+          String(existingStep.id)
+        )
+      ) {
+
+        const deleteMutation = `
+          mutation DeleteStep(
+            $id: uuid!
+          ) {
+
+            delete_workflow_steps_by_pk(
+              id: $id
+            ) {
+
+              id
+
+            }
+
+          }
+        `
+
+        const deleteResponse =
+          await nhost.graphql.request({
+
+            query:
+              deleteMutation,
+
+            variables: {
+
+              id:
+                existingStep.id
+
+            }
+
+          })
+
+        const deleteError =
+          getGraphQLError(
+            deleteResponse
+          )
+
+        if (deleteError) {
+
+          throw new Error(
+            `Step deletion failed:\n${deleteError}`
+          )
+
+        }
+
+      }
+
+    }
+
+    // ===================================================
+    // UPDATE / INSERT STEPS
+    // ===================================================
+
+    const existingStepIds =
+      new Set(
+        existingSteps.map(
+          step =>
+            String(step.id)
+        )
+      )
+
+    for (
+      let index = 0;
+      index < steps.length;
+      index++
+    ) {
+
+      const step =
+        steps[index]
+
+      const stepId =
+        String(step.id)
+
+      const stepOrder =
+        index + 1
+
+      // ===============================================
+      // UPDATE EXISTING STEP
+      // ===============================================
+
+      if (
+        existingStepIds.has(
+          stepId
+        )
+      ) {
+
+        const mutation = `
+          mutation UpdateStep(
+            $id: uuid!
+            $name: String!
+            $stepOrder: Int!
+            $type: String!
+            $config: jsonb!
+          ) {
+
+            update_workflow_steps_by_pk(
+              pk_columns: {
+                id: $id
+              }
+
+              _set: {
+                name: $name
+                step_order: $stepOrder
+                type: $type
+                config: $config
+              }
+            ) {
+
+              id
+              workflow_id
+              name
+              step_order
+              type
+              config
+              created_at
+
+            }
+
+          }
+        `
+
+        const response =
+          await nhost.graphql.request({
+
+            query:
+              mutation,
+
+            variables: {
+
+              id:
+                step.id,
+
+              name:
+                step.name.trim() ||
+                `Step ${stepOrder}`,
+
+              stepOrder,
+
+              type:
+                step.type,
+
+              config: {
+
+                prompt:
+                  step.config || ''
+
+              }
+
+            }
+
+          })
+
+        const error =
+          getGraphQLError(
+            response
+          )
+
+        if (error) {
+
+          throw new Error(
+            `Step ${stepOrder} update failed:\n${error}`
+          )
+
+        }
+
+      }
+
+      // ===============================================
+      // INSERT NEW STEP
+      // ===============================================
+
+      else {
+
+        const mutation = `
+          mutation CreateStep(
+            $workflowId: uuid!
+            $name: String!
+            $stepOrder: Int!
+            $type: String!
+            $config: jsonb!
+          ) {
+
+            insert_workflow_steps_one(
+              object: {
+                workflow_id: $workflowId
+                name: $name
+                step_order: $stepOrder
+                type: $type
+                config: $config
+              }
+            ) {
+
+              id
+              workflow_id
+              name
+              step_order
+              type
+              config
+              created_at
+
+            }
+
+          }
+        `
+
+        const response =
+          await nhost.graphql.request({
+
+            query:
+              mutation,
+
+            variables: {
+
+              workflowId,
+
+              name:
+                step.name.trim() ||
+                `Step ${stepOrder}`,
+
+              stepOrder,
+
+              type:
+                step.type,
+
+              config: {
+
+                prompt:
+                  step.config || ''
+
+              }
+
+            }
+
+          })
+
+        const error =
+          getGraphQLError(
+            response
+          )
+
+        if (error) {
+
+          throw new Error(
+            `Step ${stepOrder} creation failed:\n${error}`
+          )
+
+        }
+
+      }
+
+    }
+
+    return updatedWorkflow
+
+  }
+
+  // =====================================================
+  // SAVE
   // =====================================================
 
   const handleSave = async () => {
@@ -92,7 +1035,6 @@ function WorkflowBuilder({ user, onBack }) {
       return
     }
 
-
     if (!user?.id) {
 
       alert(
@@ -102,412 +1044,47 @@ function WorkflowBuilder({ user, onBack }) {
       return
     }
 
-
     setLoading(true)
-
 
     try {
 
-      console.log('================================')
-      console.log('CREATING WORKFLOW')
-      console.log('USER:', user.id)
-      console.log('ORGANIZATION:', ORGANIZATION_ID)
-      console.log('================================')
+      let savedWorkflow
 
+      if (isEditMode) {
 
-      // =================================================
-      // 1. CREATE WORKFLOW
-      // =================================================
+        savedWorkflow =
+          await updateWorkflow()
 
-      /*
-        IMPORTANT:
-
-        We are NOT sending created_by here.
-
-        Your database schema exposes created_by,
-        but the browser previously returned:
-
-        field 'created_by' not found in type
-        'workflows_insert_input'
-
-        Removing it avoids the schema mismatch.
-      */
-
-      const workflowMutation = `
-        mutation CreateWorkflow(
-          $orgId: uuid!
-          $name: String!
-          $description: String
-        ) {
-
-          insert_workflows_one(
-            object: {
-              org_id: $orgId
-              name: $name
-              description: $description
-            }
-          ) {
-
-            id
-            org_id
-            name
-            description
-            created_at
-            updated_at
-
-          }
-
-        }
-      `
-
-
-      const workflowResponse =
-        await nhost.graphql.request({
-
-          query: workflowMutation,
-
-          variables: {
-            orgId: ORGANIZATION_ID,
-            name: name.trim(),
-            description:
-              description.trim() || null
-          }
-
-        })
-
-
-      console.log(
-        'WORKFLOW RESPONSE:',
-        workflowResponse
-      )
-
-
-      if (
-        workflowResponse?.body?.errors?.length
-      ) {
-
-        console.error(
-          'WORKFLOW ERRORS:',
-          workflowResponse.body.errors
+        alert(
+          `Workflow "${savedWorkflow.name}" updated successfully!`
         )
 
-        throw new Error(
-          workflowResponse.body.errors
-            .map(error => error.message)
-            .join('\n')
+      } else {
+
+        savedWorkflow =
+          await createWorkflow()
+
+        alert(
+          `Workflow "${savedWorkflow.name}" created successfully!`
         )
 
       }
-
-
-      const workflow =
-        workflowResponse
-          ?.body
-          ?.data
-          ?.insert_workflows_one
-
-
-      if (!workflow) {
-
-        throw new Error(
-          'Workflow was not created.'
-        )
-
-      }
-
-
-      console.log(
-        'WORKFLOW CREATED:',
-        workflow
-      )
-
-
-      // =================================================
-      // 2. CREATE TRIGGER
-      // =================================================
-
-      /*
-        Your workflow_triggers table DOES NOT have
-        an enabled column.
-
-        Therefore we only insert:
-        workflow_id
-        type
-        config
-      */
-
-      const triggerMutation = `
-        mutation CreateTrigger(
-          $workflowId: uuid!
-          $triggerType: String!
-          $config: jsonb!
-        ) {
-
-          insert_workflow_triggers_one(
-            object: {
-              workflow_id: $workflowId
-              type: $triggerType
-              config: $config
-            }
-          ) {
-
-            id
-            workflow_id
-            type
-            config
-            created_at
-
-          }
-
-        }
-      `
-
-
-      const triggerResponse =
-        await nhost.graphql.request({
-
-          query: triggerMutation,
-
-          variables: {
-
-            workflowId:
-              workflow.id,
-
-            triggerType:
-              triggerType,
-
-            config: {}
-
-          }
-
-        })
-
-
-      console.log(
-        'TRIGGER RESPONSE:',
-        triggerResponse
-      )
-
-
-      if (
-        triggerResponse?.body?.errors?.length
-      ) {
-
-        console.error(
-          'TRIGGER ERRORS:',
-          triggerResponse.body.errors
-        )
-
-        throw new Error(
-          'Trigger creation failed:\n\n' +
-          triggerResponse.body.errors
-            .map(error => error.message)
-            .join('\n')
-        )
-
-      }
-
-
-      // =================================================
-      // 3. CREATE WORKFLOW STEPS
-      // =================================================
-
-      for (
-        let index = 0;
-        index < steps.length;
-        index++
-      ) {
-
-        const step = steps[index]
-
-
-        console.log(
-          `CREATING STEP ${index + 1}:`,
-          step
-        )
-
-
-        /*
-          IMPORTANT:
-
-          Your database uses:
-
-              position
-
-          NOT:
-
-              step_order
-        */
-
-        const stepMutation = `
-          mutation CreateWorkflowStep(
-            $workflowId: uuid!
-            $name: String!
-            $position: Int!
-            $type: String!
-            $config: jsonb!
-          ) {
-
-            insert_workflow_steps_one(
-              object: {
-                workflow_id: $workflowId
-                name: $name
-                position: $position
-                type: $type
-                config: $config
-              }
-            ) {
-
-              id
-              workflow_id
-              name
-              position
-              type
-              config
-              created_at
-
-            }
-
-          }
-        `
-
-
-        const stepResponse =
-          await nhost.graphql.request({
-
-            query: stepMutation,
-
-            variables: {
-
-              workflowId:
-                workflow.id,
-
-              name:
-                step.name.trim(),
-
-              position:
-                index + 1,
-
-              type:
-                step.type,
-
-              config: {
-                prompt:
-                  step.config || ''
-              }
-
-            }
-
-          })
-
-
-        console.log(
-          `STEP ${index + 1} RESPONSE:`,
-          stepResponse
-        )
-
-
-        if (
-          stepResponse?.body?.errors?.length
-        ) {
-
-          console.error(
-            `STEP ${index + 1} ERRORS:`,
-            stepResponse.body.errors
-          )
-
-          throw new Error(
-            `Step ${index + 1} creation failed:\n\n` +
-            stepResponse.body.errors
-              .map(error => error.message)
-              .join('\n')
-          )
-
-        }
-
-
-        const createdStep =
-          stepResponse
-            ?.body
-            ?.data
-            ?.insert_workflow_steps_one
-
-
-        if (!createdStep) {
-
-          throw new Error(
-            `Step ${index + 1} was not created.`
-          )
-
-        }
-
-
-        console.log(
-          `STEP ${index + 1} CREATED:`,
-          createdStep
-        )
-
-      }
-
-
-      // =================================================
-      // SUCCESS
-      // =================================================
-
-      console.log('================================')
-      console.log('WORKFLOW CREATED SUCCESSFULLY')
-      console.log('WORKFLOW:', workflow)
-      console.log('STEPS:', steps.length)
-      console.log('================================')
-
-
-      alert(
-        `Workflow "${workflow.name}" created successfully!\n\n` +
-        `Steps created: ${steps.length}`
-      )
-
-
-      // Clear form
-
-      setName('')
-      setDescription('')
-      setTriggerType('manual')
-      setSteps([])
-
-
-      // Go back to dashboard
 
       if (onBack) {
         onBack()
       }
 
-
     } catch (error) {
-
-      console.error(
-        '================================'
-      )
 
       console.error(
         'WORKFLOW SAVE ERROR:',
         error
       )
 
-      console.error(
-        'ERROR MESSAGE:',
-        error?.message
-      )
-
-      console.error(
-        '================================'
-      )
-
-
       alert(
         error?.message ||
         'Something went wrong while saving the workflow.'
       )
-
 
     } finally {
 
@@ -517,7 +1094,6 @@ function WorkflowBuilder({ user, onBack }) {
 
   }
 
-
   // =====================================================
   // UI
   // =====================================================
@@ -525,8 +1101,6 @@ function WorkflowBuilder({ user, onBack }) {
   return (
 
     <div className="workflow-builder">
-
-      {/* HEADER */}
 
       <header className="builder-header">
 
@@ -539,28 +1113,21 @@ function WorkflowBuilder({ user, onBack }) {
           ← Back
         </button>
 
-
         <h1>
-          ⚡ Create Workflow
+          ⚡ {isEditMode
+            ? 'Edit Workflow'
+            : 'Create Workflow'}
         </h1>
 
       </header>
-
-
-      {/* MAIN */}
 
       <main className="builder-content">
 
         <div className="builder-card">
 
-          {/* WORKFLOW DETAILS */}
-
           <h2>
             Workflow Details
           </h2>
-
-
-          {/* NAME */}
 
           <label>
             Workflow Name
@@ -570,14 +1137,11 @@ function WorkflowBuilder({ user, onBack }) {
             type="text"
             placeholder="Enter workflow name"
             value={name}
-            onChange={(e) =>
+            onChange={e =>
               setName(e.target.value)
             }
             disabled={loading}
           />
-
-
-          {/* DESCRIPTION */}
 
           <label>
             Description
@@ -586,14 +1150,13 @@ function WorkflowBuilder({ user, onBack }) {
           <textarea
             placeholder="Describe what this workflow does"
             value={description}
-            onChange={(e) =>
-              setDescription(e.target.value)
+            onChange={e =>
+              setDescription(
+                e.target.value
+              )
             }
             disabled={loading}
           />
-
-
-          {/* TRIGGER */}
 
           <label>
             Trigger
@@ -601,8 +1164,10 @@ function WorkflowBuilder({ user, onBack }) {
 
           <select
             value={triggerType}
-            onChange={(e) =>
-              setTriggerType(e.target.value)
+            onChange={e =>
+              setTriggerType(
+                e.target.value
+              )
             }
             disabled={loading}
           >
@@ -625,9 +1190,6 @@ function WorkflowBuilder({ user, onBack }) {
 
           </select>
 
-
-          {/* WORKFLOW STEPS */}
-
           <div
             style={{
               marginTop: '30px'
@@ -638,7 +1200,6 @@ function WorkflowBuilder({ user, onBack }) {
               Workflow Steps
             </h2>
 
-
             {steps.length === 0 && (
 
               <p>
@@ -646,7 +1207,6 @@ function WorkflowBuilder({ user, onBack }) {
               </p>
 
             )}
-
 
             {steps.map(
               (step, index) => (
@@ -656,13 +1216,10 @@ function WorkflowBuilder({ user, onBack }) {
                   style={{
                     border:
                       '1px solid #ddd',
-
                     borderRadius:
                       '10px',
-
                     padding:
                       '20px',
-
                     marginTop:
                       '15px'
                   }}
@@ -672,9 +1229,6 @@ function WorkflowBuilder({ user, onBack }) {
                     Step {index + 1}
                   </h3>
 
-
-                  {/* STEP NAME */}
-
                   <label>
                     Step Name
                   </label>
@@ -682,7 +1236,7 @@ function WorkflowBuilder({ user, onBack }) {
                   <input
                     type="text"
                     value={step.name}
-                    onChange={(e) =>
+                    onChange={e =>
                       updateStep(
                         step.id,
                         'name',
@@ -692,16 +1246,13 @@ function WorkflowBuilder({ user, onBack }) {
                     disabled={loading}
                   />
 
-
-                  {/* STEP TYPE */}
-
                   <label>
                     Step Type
                   </label>
 
                   <select
                     value={step.type}
-                    onChange={(e) =>
+                    onChange={e =>
                       updateStep(
                         step.id,
                         'type',
@@ -737,9 +1288,6 @@ function WorkflowBuilder({ user, onBack }) {
 
                   </select>
 
-
-                  {/* CONFIG */}
-
                   <label>
                     Configuration
                   </label>
@@ -747,7 +1295,7 @@ function WorkflowBuilder({ user, onBack }) {
                   <textarea
                     placeholder="Enter step configuration or prompt"
                     value={step.config}
-                    onChange={(e) =>
+                    onChange={e =>
                       updateStep(
                         step.id,
                         'config',
@@ -757,19 +1305,14 @@ function WorkflowBuilder({ user, onBack }) {
                     disabled={loading}
                   />
 
-
-                  {/* REMOVE */}
-
                   <button
                     type="button"
                     onClick={() =>
-                      removeStep(step.id)
+                      removeStep(
+                        step.id
+                      )
                     }
                     disabled={loading}
-                    style={{
-                      marginTop:
-                        '10px'
-                    }}
                   >
                     Remove Step
                   </button>
@@ -778,9 +1321,6 @@ function WorkflowBuilder({ user, onBack }) {
 
               )
             )}
-
-
-            {/* ADD STEP */}
 
             <button
               type="button"
@@ -796,9 +1336,6 @@ function WorkflowBuilder({ user, onBack }) {
 
           </div>
 
-
-          {/* ACTIONS */}
-
           <div className="builder-actions">
 
             <button
@@ -810,18 +1347,17 @@ function WorkflowBuilder({ user, onBack }) {
               Cancel
             </button>
 
-
             <button
               type="button"
               className="save-button"
               onClick={handleSave}
               disabled={loading}
             >
-
               {loading
                 ? 'Saving...'
-                : 'Save Workflow'}
-
+                : isEditMode
+                  ? 'Update Workflow'
+                  : 'Save Workflow'}
             </button>
 
           </div>
@@ -833,7 +1369,7 @@ function WorkflowBuilder({ user, onBack }) {
     </div>
 
   )
-}
 
+}
 
 export default WorkflowBuilder

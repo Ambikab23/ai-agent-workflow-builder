@@ -28,6 +28,16 @@ function getConfig(config: any) {
   return config
 }
 
+function getGraphQLError(response: any) {
+  if (response?.body?.errors?.length) {
+    return response.body.errors
+      .map((error: any) => error.message)
+      .join("\n")
+  }
+
+  return null
+}
+
 async function executeLLM(
   prompt: string,
   previousOutput: any,
@@ -49,9 +59,11 @@ Workflow instruction:
 ${prompt || "Complete the requested workflow task."}
 
 Previous step output:
-${previousOutput
-  ? JSON.stringify(previousOutput)
-  : "None"}
+${
+  previousOutput
+    ? JSON.stringify(previousOutput)
+    : "None"
+}
 
 Return a useful response for the next workflow step.
 `
@@ -105,7 +117,8 @@ Return a useful response for the next workflow step.
     success: true,
     type: "llm_call",
     prompt,
-    message: text || "LLM completed successfully.",
+    message:
+      text || "LLM completed successfully.",
     previous_output:
       previousOutput || null,
     executed_at:
@@ -126,13 +139,15 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json()
 
-    workflowRunId = body.workflowRunId
+    workflowRunId =
+      body.workflowRunId
 
     if (!workflowRunId) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "workflowRunId is required",
+          error:
+            "workflowRunId is required",
         }),
         {
           status: 400,
@@ -141,57 +156,86 @@ Deno.serve(async (req) => {
       )
     }
 
-    console.log("================================")
-    console.log("EXECUTE WORKFLOW")
-    console.log("Workflow Run ID:", workflowRunId)
-    console.log("================================")
+    console.log(
+      "================================",
+    )
 
-    // -------------------------------------------------
+    console.log(
+      "EXECUTE WORKFLOW",
+    )
+
+    console.log(
+      "Workflow Run ID:",
+      workflowRunId,
+    )
+
+    console.log(
+      "================================",
+    )
+
+    // =================================================
     // GET WORKFLOW
-    // -------------------------------------------------
+    // =================================================
 
     const runQuery = `
-      query GetWorkflowRun($id: uuid!) {
-        workflow_runs_by_pk(id: $id) {
+      query GetWorkflowRun(
+        $id: uuid!
+      ) {
+
+        workflow_runs_by_pk(
+          id: $id
+        ) {
+
           id
           workflow_id
           status
 
           workflow {
+
             id
             name
             description
 
             workflow_steps(
               order_by: {
-                position: asc
+                step_order: asc
               }
             ) {
+
               id
               name
-              position
+              step_order
               type
               config
+
             }
+
           }
+
         }
+
       }
     `
 
     const runResponse =
       await nhost.graphql.request({
-        query: runQuery,
+        query:
+          runQuery,
 
         variables: {
-          id: workflowRunId,
+          id:
+            workflowRunId,
         },
       })
 
-    if (runResponse?.body?.errors?.length) {
+    const runError =
+      getGraphQLError(
+        runResponse,
+      )
+
+    if (runError) {
       throw new Error(
-        runResponse.body.errors
-          .map((e: any) => e.message)
-          .join("\n"),
+        runError,
       )
     }
 
@@ -229,15 +273,19 @@ Deno.serve(async (req) => {
       steps.length,
     )
 
-    // -------------------------------------------------
-    // MARK RUNNING
-    // -------------------------------------------------
+    // =================================================
+    // MARK WORKFLOW AS RUNNING
+    // =================================================
+
+    const workflowStartedAt =
+      new Date().toISOString()
 
     const updateRunningMutation = `
       mutation UpdateWorkflowRun(
         $id: uuid!
         $startedAt: timestamptz!
       ) {
+
         update_workflow_runs_by_pk(
           pk_columns: {
             id: $id
@@ -247,28 +295,48 @@ Deno.serve(async (req) => {
             status: "running"
             started_at: $startedAt
           }
+
         ) {
+
           id
           status
           started_at
+
         }
+
       }
     `
 
-    await nhost.graphql.request({
-      query: updateRunningMutation,
+    const runningResponse =
+      await nhost.graphql.request({
+        query:
+          updateRunningMutation,
 
-      variables: {
-        id: workflowRunId,
+        variables: {
 
-        startedAt:
-          new Date().toISOString(),
-      },
-    })
+          id:
+            workflowRunId,
 
-    // -------------------------------------------------
+          startedAt:
+            workflowStartedAt,
+
+        },
+      })
+
+    const runningError =
+      getGraphQLError(
+        runningResponse,
+      )
+
+    if (runningError) {
+      throw new Error(
+        runningError,
+      )
+    }
+
+    // =================================================
     // EXECUTE STEPS
-    // -------------------------------------------------
+    // =================================================
 
     let previousOutput: any = null
 
@@ -277,11 +345,18 @@ Deno.serve(async (req) => {
       index < steps.length;
       index++
     ) {
-      const step = steps[index]
 
-      console.log("--------------------------------")
+      const step =
+        steps[index]
+
       console.log(
-        `Executing step ${index + 1}:`,
+        "--------------------------------",
+      )
+
+      console.log(
+        `Executing step ${
+          index + 1
+        }:`,
         step.name,
       )
 
@@ -290,48 +365,99 @@ Deno.serve(async (req) => {
         step.type,
       )
 
-      // -------------------------------------------------
+      // =================================================
       // CREATE STEP RUN
-      // -------------------------------------------------
+      // =================================================
+
+      /*
+        IMPORTANT:
+
+        Your step_runs table contains:
+
+        workflow_run_id
+        step_id
+        status
+        input
+        output
+        error
+        attempt_count
+        approved_by
+        approved_at
+        started_at
+        completed_at
+        created_at
+
+        Therefore we MUST use:
+
+        step_id
+
+        NOT:
+
+        workflow_step_id
+      */
 
       const createStepRunMutation = `
         mutation CreateStepRun(
           $workflowRunId: uuid!
-          $workflowStepId: uuid!
+          $stepId: uuid!
           $status: String!
           $input: jsonb!
           $startedAt: timestamptz!
         ) {
+
           insert_step_runs_one(
             object: {
-              workflow_run_id: $workflowRunId
-              workflow_step_id: $workflowStepId
-              status: $status
-              input: $input
-              started_at: $startedAt
+
+              workflow_run_id:
+                $workflowRunId
+
+              step_id:
+                $stepId
+
+              status:
+                $status
+
+              input:
+                $input
+
+              started_at:
+                $startedAt
+
             }
           ) {
+
             id
             status
+            step_id
+            workflow_run_id
+            started_at
+
           }
+
         }
       `
 
+      const stepStartedAt =
+        new Date().toISOString()
+
       const stepRunResponse =
         await nhost.graphql.request({
+
           query:
             createStepRunMutation,
 
           variables: {
+
             workflowRunId,
 
-            workflowStepId:
+            stepId:
               step.id,
 
             status:
               "running",
 
             input: {
+
               type:
                 step.type,
 
@@ -343,26 +469,24 @@ Deno.serve(async (req) => {
 
               previous_output:
                 previousOutput,
+
             },
 
             startedAt:
-              new Date().toISOString(),
+              stepStartedAt,
+
           },
+
         })
 
-      if (
-        stepRunResponse
-          ?.body
-          ?.errors
-          ?.length
-      ) {
+      const stepRunError =
+        getGraphQLError(
+          stepRunResponse,
+        )
+
+      if (stepRunError) {
         throw new Error(
-          stepRunResponse.body.errors
-            .map(
-              (e: any) =>
-                e.message,
-            )
-            .join("\n"),
+          stepRunError,
         )
       }
 
@@ -379,25 +503,30 @@ Deno.serve(async (req) => {
       }
 
       try {
-        // -------------------------------------------------
+
+        // =================================================
         // EXECUTE STEP
-        // -------------------------------------------------
+        // =================================================
 
         const config =
-          getConfig(step.config)
+          getConfig(
+            step.config,
+          )
 
         let output: any
 
-        // -------------------------------------------------
-        // REAL LLM
-        // -------------------------------------------------
+        // =================================================
+        // LLM
+        // =================================================
 
         if (
           step.type ===
           "llm_call"
         ) {
+
           const prompt =
-            config?.prompt || ""
+            config?.prompt ||
+            ""
 
           output =
             await executeLLM(
@@ -406,16 +535,19 @@ Deno.serve(async (req) => {
             )
         }
 
-        // -------------------------------------------------
+        // =================================================
         // HTTP
-        // -------------------------------------------------
+        // =================================================
 
         else if (
           step.type ===
           "http_request"
         ) {
+
           output = {
-            success: true,
+
+            success:
+              true,
 
             type:
               "http_request",
@@ -431,19 +563,24 @@ Deno.serve(async (req) => {
 
             executed_at:
               new Date().toISOString(),
+
           }
+
         }
 
-        // -------------------------------------------------
+        // =================================================
         // DATABASE
-        // -------------------------------------------------
+        // =================================================
 
         else if (
           step.type ===
           "db_write"
         ) {
+
           output = {
-            success: true,
+
+            success:
+              true,
 
             type:
               "db_write",
@@ -459,19 +596,24 @@ Deno.serve(async (req) => {
 
             executed_at:
               new Date().toISOString(),
+
           }
+
         }
 
-        // -------------------------------------------------
+        // =================================================
         // NOTIFICATION
-        // -------------------------------------------------
+        // =================================================
 
         else if (
           step.type ===
           "notify"
         ) {
+
           output = {
-            success: true,
+
+            success:
+              true,
 
             type:
               "notify",
@@ -487,19 +629,24 @@ Deno.serve(async (req) => {
 
             executed_at:
               new Date().toISOString(),
+
           }
+
         }
 
-        // -------------------------------------------------
+        // =================================================
         // CONDITIONAL
-        // -------------------------------------------------
+        // =================================================
 
         else if (
           step.type ===
           "conditional_branch"
         ) {
+
           output = {
-            success: true,
+
+            success:
+              true,
 
             type:
               "conditional_branch",
@@ -515,19 +662,24 @@ Deno.serve(async (req) => {
 
             executed_at:
               new Date().toISOString(),
+
           }
+
         }
 
-        // -------------------------------------------------
+        // =================================================
         // APPROVAL
-        // -------------------------------------------------
+        // =================================================
 
         else if (
           step.type ===
           "approval_gate"
         ) {
+
           output = {
-            success: true,
+
+            success:
+              true,
 
             type:
               "approval_gate",
@@ -542,13 +694,17 @@ Deno.serve(async (req) => {
 
             executed_at:
               new Date().toISOString(),
+
           }
+
         }
 
         else {
+
           throw new Error(
             `Unsupported step type: ${step.type}`,
           )
+
         }
 
         console.log(
@@ -556,9 +712,12 @@ Deno.serve(async (req) => {
           output,
         )
 
-        // -------------------------------------------------
-        // COMPLETE STEP
-        // -------------------------------------------------
+        // =================================================
+        // COMPLETE STEP RUN
+        // =================================================
+
+        const completedAt =
+          new Date().toISOString()
 
         const updateStepMutation = `
           mutation CompleteStepRun(
@@ -567,31 +726,45 @@ Deno.serve(async (req) => {
             $output: jsonb!
             $completedAt: timestamptz!
           ) {
+
             update_step_runs_by_pk(
               pk_columns: {
                 id: $id
               }
 
               _set: {
-                status: $status
-                output: $output
-                completed_at: $completedAt
+
+                status:
+                  $status
+
+                output:
+                  $output
+
+                completed_at:
+                  $completedAt
+
               }
+
             ) {
+
               id
               status
               output
               completed_at
+
             }
+
           }
         `
 
         const updateStepResponse =
           await nhost.graphql.request({
+
             query:
               updateStepMutation,
 
             variables: {
+
               id:
                 stepRun.id,
 
@@ -600,96 +773,147 @@ Deno.serve(async (req) => {
 
               output,
 
-              completedAt:
-                new Date().toISOString(),
+              completedAt,
+
             },
+
           })
 
-        if (
-          updateStepResponse
-            ?.body
-            ?.errors
-            ?.length
-        ) {
+        const updateStepError =
+          getGraphQLError(
+            updateStepResponse,
+          )
+
+        if (updateStepError) {
           throw new Error(
-            updateStepResponse.body.errors
-              .map(
-                (e: any) =>
-                  e.message,
-              )
-              .join("\n"),
+            updateStepError,
           )
         }
 
         previousOutput =
           output
+
       } catch (stepError) {
+
         console.error(
           "STEP FAILED:",
           stepError,
         )
 
-        // -------------------------------------------------
+        // =================================================
         // SAVE FAILED STEP
-        // -------------------------------------------------
+        // =================================================
 
-        await nhost.graphql.request({
-          query: `
-            mutation FailStepRun(
-              $id: uuid!
-              $status: String!
-              $output: jsonb!
-              $completedAt: timestamptz!
-            ) {
-              update_step_runs_by_pk(
-                pk_columns: {
-                  id: $id
-                }
+        const failedOutput = {
 
-                _set: {
-                  status: $status
-                  output: $output
-                  completed_at: $completedAt
-                }
-              ) {
-                id
-                status
+          success:
+            false,
+
+          error:
+            stepError instanceof Error
+              ? stepError.message
+              : "Step failed",
+
+          executed_at:
+            new Date().toISOString(),
+
+        }
+
+        const failStepMutation = `
+          mutation FailStepRun(
+            $id: uuid!
+            $status: String!
+            $output: jsonb!
+            $error: String
+            $completedAt: timestamptz!
+          ) {
+
+            update_step_runs_by_pk(
+              pk_columns: {
+                id: $id
               }
+
+              _set: {
+
+                status:
+                  $status
+
+                output:
+                  $output
+
+                error:
+                  $error
+
+                completed_at:
+                  $completedAt
+
+              }
+
+            ) {
+
+              id
+              status
+              error
+              completed_at
+
             }
-          `,
 
-          variables: {
-            id:
-              stepRun.id,
+          }
+        `
 
-            status:
-              "failed",
+        const failResponse =
+          await nhost.graphql.request({
 
-            output: {
-              success: false,
+            query:
+              failStepMutation,
+
+            variables: {
+
+              id:
+                stepRun.id,
+
+              status:
+                "failed",
+
+              output:
+                failedOutput,
 
               error:
-                stepError instanceof
-                Error
+                stepError instanceof Error
                   ? stepError.message
                   : "Step failed",
 
-              executed_at:
+              completedAt:
                 new Date().toISOString(),
+
             },
 
-            completedAt:
-              new Date().toISOString(),
-          },
-        })
+          })
+
+        const failError =
+          getGraphQLError(
+            failResponse,
+          )
+
+        if (failError) {
+
+          console.error(
+            "Could not save failed step:",
+            failError,
+          )
+
+        }
 
         throw stepError
       }
     }
 
-    // -------------------------------------------------
+    // =================================================
     // COMPLETE WORKFLOW
-    // -------------------------------------------------
+    // =================================================
+
+    const workflowCompletedAt =
+      new Date().toISOString()
 
     const completeMutation = `
       mutation CompleteWorkflowRun(
@@ -697,29 +921,41 @@ Deno.serve(async (req) => {
         $status: String!
         $completedAt: timestamptz!
       ) {
+
         update_workflow_runs_by_pk(
           pk_columns: {
             id: $id
           }
 
           _set: {
-            status: $status
-            completed_at: $completedAt
+
+            status:
+              $status
+
+            completed_at:
+              $completedAt
+
           }
+
         ) {
+
           id
           status
           completed_at
+
         }
+
       }
     `
 
     const completeResponse =
       await nhost.graphql.request({
+
         query:
           completeMutation,
 
         variables: {
+
           id:
             workflowRunId,
 
@@ -727,33 +963,40 @@ Deno.serve(async (req) => {
             "completed",
 
           completedAt:
-            new Date().toISOString(),
+            workflowCompletedAt,
+
         },
+
       })
 
-    if (
-      completeResponse
-        ?.body
-        ?.errors
-        ?.length
-    ) {
+    const completeError =
+      getGraphQLError(
+        completeResponse,
+      )
+
+    if (completeError) {
       throw new Error(
-        completeResponse.body.errors
-          .map(
-            (e: any) =>
-              e.message,
-          )
-          .join("\n"),
+        completeError,
       )
     }
 
-    console.log("================================")
-    console.log("WORKFLOW COMPLETED")
-    console.log("================================")
+    console.log(
+      "================================",
+    )
+
+    console.log(
+      "WORKFLOW COMPLETED",
+    )
+
+    console.log(
+      "================================",
+    )
 
     return new Response(
       JSON.stringify({
-        success: true,
+
+        success:
+          true,
 
         workflowRunId,
 
@@ -768,13 +1011,20 @@ Deno.serve(async (req) => {
 
         finalOutput:
           previousOutput,
+
       }),
       {
-        status: 200,
+
+        status:
+          200,
+
         headers,
+
       },
     )
+
   } catch (error) {
+
     console.error(
       "================================",
     )
@@ -788,452 +1038,115 @@ Deno.serve(async (req) => {
       "================================",
     )
 
-    // -------------------------------------------------
+    // =================================================
     // MARK WORKFLOW FAILED
-    // -------------------------------------------------
+    // =================================================
 
     if (workflowRunId) {
+
       try {
-        await nhost.graphql.request({
-          query: `
-            mutation FailWorkflowRun(
-              $id: uuid!
-              $status: String!
-              $completedAt: timestamptz!
-            ) {
-              update_workflow_runs_by_pk(
-                pk_columns: {
-                  id: $id
-                }
 
-                _set: {
-                  status: $status
-                  completed_at: $completedAt
-                }
-              ) {
-                id
-                status
+        const failedAt =
+          new Date().toISOString()
+
+        const failWorkflowMutation = `
+          mutation FailWorkflowRun(
+            $id: uuid!
+            $status: String!
+            $completedAt: timestamptz!
+          ) {
+
+            update_workflow_runs_by_pk(
+              pk_columns: {
+                id: $id
               }
+
+              _set: {
+
+                status:
+                  $status
+
+                completed_at:
+                  $completedAt
+
+              }
+
+            ) {
+
+              id
+              status
+              completed_at
+
             }
-          `,
 
-          variables: {
-            id:
-              workflowRunId,
+          }
+        `
 
-            status:
-              "failed",
+        const failWorkflowResponse =
+          await nhost.graphql.request({
 
-            completedAt:
-              new Date().toISOString(),
-          },
-        })
+            query:
+              failWorkflowMutation,
+
+            variables: {
+
+              id:
+                workflowRunId,
+
+              status:
+                "failed",
+
+              completedAt:
+                failedAt,
+
+            },
+
+          })
+
+        const failWorkflowError =
+          getGraphQLError(
+            failWorkflowResponse,
+          )
+
+        if (failWorkflowError) {
+
+          console.error(
+            "Could not mark workflow failed:",
+            failWorkflowError,
+          )
+
+        }
+
       } catch (dbError) {
+
         console.error(
           "Could not mark workflow failed:",
           dbError,
         )
+
       }
+
     }
 
     return new Response(
       JSON.stringify({
-        success: false,
+
+        success:
+          false,
 
         error:
           error instanceof Error
             ? error.message
             : "Workflow execution failed",
+
       }),
       {
-        status: 500,
+
+        status:
+          500,
+
         headers,
-      },
-    )
-  }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 204,
-      headers,
-    })
-  }
-
-  try {
-    const body = await req.json()
-
-    const workflowRunId = body.workflowRunId
-
-    if (!workflowRunId) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "workflowRunId is required",
-        }),
-        {
-          status: 400,
-          headers,
-        },
-      )
-    }
-
-    console.log("================================")
-    console.log("EXECUTE WORKFLOW")
-    console.log("Workflow Run ID:", workflowRunId)
-    console.log("================================")
-
-    // -------------------------------------------------
-    // 1. GET WORKFLOW RUN
-    // -------------------------------------------------
-
-    const runQuery = `
-      query GetWorkflowRun($id: uuid!) {
-        workflow_runs_by_pk(id: $id) {
-          id
-          workflow_id
-          status
-          created_by
-
-          workflow {
-            id
-            name
-            description
-
-            workflow_steps(
-              order_by: {
-                step_order: asc
-              }
-            ) {
-              id
-              name
-              step_order
-              type
-              config
-            }
-          }
-        }
-      }
-    `
-
-    const runResponse = await nhost.graphql.request({
-      query: runQuery,
-      variables: {
-        id: workflowRunId,
-      },
-    })
-
-    if (runResponse?.body?.errors?.length) {
-      throw new Error(
-        runResponse.body.errors
-          .map((e: any) => e.message)
-          .join("\n"),
-      )
-    }
-
-    const workflowRun =
-      runResponse?.body?.data?.workflow_runs_by_pk
-
-    if (!workflowRun) {
-      throw new Error("Workflow run not found")
-    }
-
-    const workflow = workflowRun.workflow
-
-    if (!workflow) {
-      throw new Error("Workflow not found")
-    }
-
-    const steps = workflow.workflow_steps || []
-
-    console.log("Workflow:", workflow.name)
-    console.log("Steps:", steps.length)
-
-    // -------------------------------------------------
-    // 2. MARK WORKFLOW RUN AS RUNNING
-    // -------------------------------------------------
-
-    const updateRunningMutation = `
-      mutation UpdateWorkflowRun(
-        $id: uuid!
-      ) {
-        update_workflow_runs_by_pk(
-          pk_columns: {
-            id: $id
-          }
-
-          _set: {
-            status: "running"
-            started_at: "now()"
-          }
-        ) {
-          id
-          status
-          started_at
-        }
-      }
-    `
-
-    await nhost.graphql.request({
-      query: updateRunningMutation,
-      variables: {
-        id: workflowRunId,
-      },
-    })
-
-    // -------------------------------------------------
-    // 3. EXECUTE EACH STEP
-    // -------------------------------------------------
-
-    for (const step of steps) {
-      console.log("--------------------------------")
-      console.log("Executing step:", step.name)
-      console.log("Type:", step.type)
-      console.log("Step ID:", step.id)
-
-      // Create step run
-      const createStepRunMutation = `
-        mutation CreateStepRun(
-          $workflowRunId: uuid!
-          $stepId: uuid!
-          $input: jsonb!
-        ) {
-          insert_step_runs_one(
-            object: {
-              workflow_run_id: $workflowRunId
-              step_id: $stepId
-              status: "running"
-              input: $input
-              attempt_count: 1
-              started_at: "now()"
-            }
-          ) {
-            id
-            status
-          }
-        }
-      `
-
-      const stepRunResponse =
-        await nhost.graphql.request({
-          query: createStepRunMutation,
-          variables: {
-            workflowRunId,
-            stepId: step.id,
-            input: step.config || {},
-          },
-        })
-
-      if (stepRunResponse?.body?.errors?.length) {
-        throw new Error(
-          stepRunResponse.body.errors
-            .map((e: any) => e.message)
-            .join("\n"),
-        )
-      }
-
-      const stepRun =
-        stepRunResponse
-          ?.body
-          ?.data
-          ?.insert_step_runs_one
-
-      if (!stepRun) {
-        throw new Error(
-          `Could not create step run for ${step.name}`,
-        )
-      }
-
-      // -------------------------------------------------
-      // STEP EXECUTION
-      // -------------------------------------------------
-
-      let output: any = {}
-
-      if (step.type === "llm_call") {
-        output = {
-          message:
-            "LLM step received successfully.",
-          prompt:
-            step.config?.prompt || "",
-        }
-      }
-
-      else if (step.type === "http_request") {
-        output = {
-          message:
-            "HTTP request step received.",
-          config:
-            step.config || {},
-        }
-      }
-
-      else if (step.type === "db_write") {
-        output = {
-          message:
-            "Database write step received.",
-          config:
-            step.config || {},
-        }
-      }
-
-      else if (step.type === "notify") {
-        output = {
-          message:
-            "Notification step received.",
-          config:
-            step.config || {},
-        }
-      }
-
-      else if (
-        step.type === "conditional_branch"
-      ) {
-        output = {
-          message:
-            "Conditional branch evaluated.",
-          config:
-            step.config || {},
-        }
-      }
-
-      else if (
-        step.type === "approval_gate"
-      ) {
-        output = {
-          message:
-            "Approval gate reached.",
-          status:
-            "waiting_for_approval",
-        }
-      }
-
-      else {
-        output = {
-          message:
-            `Unknown step type: ${step.type}`,
-        }
-      }
-
-      console.log(
-        "Step output:",
-        output,
-      )
-
-      // -------------------------------------------------
-      // MARK STEP AS COMPLETED
-      // -------------------------------------------------
-
-      const updateStepMutation = `
-        mutation UpdateStepRun(
-          $id: uuid!
-          $output: jsonb!
-        ) {
-          update_step_runs_by_pk(
-            pk_columns: {
-              id: $id
-            }
-
-            _set: {
-              status: "completed"
-              output: $output
-              completed_at: "now()"
-            }
-          ) {
-            id
-            status
-            output
-            completed_at
-          }
-        }
-      `
-
-      await nhost.graphql.request({
-        query: updateStepMutation,
-        variables: {
-          id: stepRun.id,
-          output,
-        },
-      })
-    }
-
-    // -------------------------------------------------
-    // 4. MARK WORKFLOW AS COMPLETED
-    // -------------------------------------------------
-
-    const completeMutation = `
-      mutation CompleteWorkflowRun(
-        $id: uuid!
-      ) {
-        update_workflow_runs_by_pk(
-          pk_columns: {
-            id: $id
-          }
-
-          _set: {
-            status: "completed"
-            completed_at: "now()"
-          }
-        ) {
-          id
-          status
-          completed_at
-        }
-      }
-    `
-
-    const completeResponse =
-      await nhost.graphql.request({
-        query: completeMutation,
-        variables: {
-          id: workflowRunId,
-        },
-      })
-
-    if (completeResponse?.body?.errors?.length) {
-      throw new Error(
-        completeResponse.body.errors
-          .map((e: any) => e.message)
-          .join("\n"),
-      )
-    }
-
-    console.log("================================")
-    console.log("WORKFLOW COMPLETED")
-    console.log("================================")
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        workflowRunId,
-        workflow: workflow.name,
-        stepsExecuted: steps.length,
-        status: "completed",
-      }),
-      {
-        status: 200,
-        headers,
-      },
-    )
-
-  } catch (error) {
-
-    console.error(
-      "EXECUTE WORKFLOW ERROR:",
-      error,
-    )
-
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Workflow execution failed",
-      }),
-      {
-        status: 500,
-        headers,
       },
     )
   }
