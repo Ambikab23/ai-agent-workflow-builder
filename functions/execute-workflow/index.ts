@@ -12,6 +12,10 @@ const headers = {
     "Content-Type, Authorization",
 }
 
+// =====================================================
+// CONFIG HELPER
+// =====================================================
+
 function getConfig(config: any) {
   if (!config) return {}
 
@@ -28,6 +32,10 @@ function getConfig(config: any) {
   return config
 }
 
+// =====================================================
+// GRAPHQL ERROR HELPER
+// =====================================================
+
 function getGraphQLError(response: any) {
   if (response?.body?.errors?.length) {
     return response.body.errors
@@ -38,11 +46,16 @@ function getGraphQLError(response: any) {
   return null
 }
 
+// =====================================================
+// OPENAI LLM
+// =====================================================
+
 async function executeLLM(
   prompt: string,
   previousOutput: any,
 ) {
-  const apiKey = Deno.env.get("OPENAI_API_KEY")
+  const apiKey =
+    Deno.env.get("OPENAI_API_KEY")
 
   if (!apiKey) {
     throw new Error(
@@ -75,7 +88,8 @@ Return a useful response for the next workflow step.
 
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        Authorization:
+          `Bearer ${apiKey}`,
       },
 
       body: JSON.stringify({
@@ -85,7 +99,8 @@ Return a useful response for the next workflow step.
     },
   )
 
-  const data = await response.json()
+  const data =
+    await response.json()
 
   if (!response.ok) {
     throw new Error(
@@ -96,17 +111,35 @@ Return a useful response for the next workflow step.
 
   let text = ""
 
-  if (typeof data?.output_text === "string") {
-    text = data.output_text
-  } else if (Array.isArray(data?.output)) {
-    for (const item of data.output) {
-      if (Array.isArray(item?.content)) {
-        for (const content of item.content) {
+  if (
+    typeof data?.output_text ===
+    "string"
+  ) {
+    text =
+      data.output_text
+  } else if (
+    Array.isArray(data?.output)
+  ) {
+    for (
+      const item of data.output
+    ) {
+      if (
+        Array.isArray(
+          item?.content,
+        )
+      ) {
+        for (
+          const content of
+          item.content
+        ) {
           if (
-            content?.type === "output_text" &&
-            typeof content?.text === "string"
+            content?.type ===
+              "output_text" &&
+            typeof content?.text ===
+              "string"
           ) {
-            text += content.text
+            text +=
+              content.text
           }
         }
       }
@@ -115,18 +148,34 @@ Return a useful response for the next workflow step.
 
   return {
     success: true,
-    type: "llm_call",
+
+    type:
+      "llm_call",
+
     prompt,
+
     message:
-      text || "LLM completed successfully.",
+      text ||
+      "LLM completed successfully.",
+
     previous_output:
       previousOutput || null,
+
     executed_at:
       new Date().toISOString(),
   }
 }
 
+// =====================================================
+// MAIN FUNCTION
+// =====================================================
+
 Deno.serve(async (req) => {
+
+  // ---------------------------------------------------
+  // CORS
+  // ---------------------------------------------------
+
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
@@ -137,7 +186,13 @@ Deno.serve(async (req) => {
   let workflowRunId = ""
 
   try {
-    const body = await req.json()
+
+    // =================================================
+    // REQUEST
+    // =================================================
+
+    const body =
+      await req.json()
 
     workflowRunId =
       body.workflowRunId
@@ -174,8 +229,23 @@ Deno.serve(async (req) => {
     )
 
     // =================================================
-    // GET WORKFLOW
+    // GET WORKFLOW RUN
     // =================================================
+
+    /*
+      workflow_steps table contains:
+
+      id
+      workflow_id
+      name
+      step_order
+      type
+      config
+      created_at
+
+      Therefore use step_order.
+      DO NOT use position.
+    */
 
     const runQuery = `
       query GetWorkflowRun(
@@ -207,6 +277,7 @@ Deno.serve(async (req) => {
               step_order
               type
               config
+              created_at
 
             }
 
@@ -219,6 +290,7 @@ Deno.serve(async (req) => {
 
     const runResponse =
       await nhost.graphql.request({
+
         query:
           runQuery,
 
@@ -226,6 +298,7 @@ Deno.serve(async (req) => {
           id:
             workflowRunId,
         },
+
       })
 
     const runError =
@@ -261,7 +334,8 @@ Deno.serve(async (req) => {
     }
 
     const steps =
-      workflow.workflow_steps || []
+      workflow.workflow_steps ||
+      []
 
     console.log(
       "Workflow:",
@@ -274,10 +348,10 @@ Deno.serve(async (req) => {
     )
 
     // =================================================
-    // MARK WORKFLOW AS RUNNING
+    // MARK WORKFLOW RUNNING
     // =================================================
 
-    const workflowStartedAt =
+    const startedAt =
       new Date().toISOString()
 
     const updateRunningMutation = `
@@ -309,6 +383,7 @@ Deno.serve(async (req) => {
 
     const runningResponse =
       await nhost.graphql.request({
+
         query:
           updateRunningMutation,
 
@@ -317,10 +392,10 @@ Deno.serve(async (req) => {
           id:
             workflowRunId,
 
-          startedAt:
-            workflowStartedAt,
+          startedAt,
 
         },
+
       })
 
     const runningError =
@@ -338,7 +413,8 @@ Deno.serve(async (req) => {
     // EXECUTE STEPS
     // =================================================
 
-    let previousOutput: any = null
+    let previousOutput: any =
+      null
 
     for (
       let index = 0;
@@ -354,10 +430,18 @@ Deno.serve(async (req) => {
       )
 
       console.log(
-        `Executing step ${
-          index + 1
-        }:`,
+        `Executing step ${index + 1}:`,
         step.name,
+      )
+
+      console.log(
+        "Step ID:",
+        step.id,
+      )
+
+      console.log(
+        "Step order:",
+        step.step_order,
       )
 
       console.log(
@@ -372,7 +456,7 @@ Deno.serve(async (req) => {
       /*
         IMPORTANT:
 
-        Your step_runs table contains:
+        step_runs table contains:
 
         workflow_run_id
         step_id
@@ -387,14 +471,15 @@ Deno.serve(async (req) => {
         completed_at
         created_at
 
-        Therefore we MUST use:
+        Therefore:
 
-        step_id
+        USE step_id
 
-        NOT:
-
-        workflow_step_id
+        NEVER use workflow_step_id.
       */
+
+      const stepStartedAt =
+        new Date().toISOString()
 
       const createStepRunMutation = `
         mutation CreateStepRun(
@@ -427,18 +512,15 @@ Deno.serve(async (req) => {
           ) {
 
             id
-            status
-            step_id
             workflow_run_id
+            step_id
+            status
             started_at
 
           }
 
         }
       `
-
-      const stepStartedAt =
-        new Date().toISOString()
 
       const stepRunResponse =
         await nhost.graphql.request({
@@ -467,6 +549,9 @@ Deno.serve(async (req) => {
               step_number:
                 index + 1,
 
+              step_order:
+                step.step_order,
+
               previous_output:
                 previousOutput,
 
@@ -486,7 +571,7 @@ Deno.serve(async (req) => {
 
       if (stepRunError) {
         throw new Error(
-          stepRunError,
+          `Step run creation failed for "${step.name}":\n${stepRunError}`,
         )
       }
 
@@ -502,11 +587,11 @@ Deno.serve(async (req) => {
         )
       }
 
-      try {
+      // =================================================
+      // EXECUTE CURRENT STEP
+      // =================================================
 
-        // =================================================
-        // EXECUTE STEP
-        // =================================================
+      try {
 
         const config =
           getConfig(
@@ -515,9 +600,9 @@ Deno.serve(async (req) => {
 
         let output: any
 
-        // =================================================
+        // =============================================
         // LLM
-        // =================================================
+        // =============================================
 
         if (
           step.type ===
@@ -535,9 +620,9 @@ Deno.serve(async (req) => {
             )
         }
 
-        // =================================================
+        // =============================================
         // HTTP
-        // =================================================
+        // =============================================
 
         else if (
           step.type ===
@@ -546,8 +631,7 @@ Deno.serve(async (req) => {
 
           output = {
 
-            success:
-              true,
+            success: true,
 
             type:
               "http_request",
@@ -565,12 +649,11 @@ Deno.serve(async (req) => {
               new Date().toISOString(),
 
           }
-
         }
 
-        // =================================================
-        // DATABASE
-        // =================================================
+        // =============================================
+        // DATABASE WRITE
+        // =============================================
 
         else if (
           step.type ===
@@ -579,8 +662,7 @@ Deno.serve(async (req) => {
 
           output = {
 
-            success:
-              true,
+            success: true,
 
             type:
               "db_write",
@@ -598,12 +680,11 @@ Deno.serve(async (req) => {
               new Date().toISOString(),
 
           }
-
         }
 
-        // =================================================
+        // =============================================
         // NOTIFICATION
-        // =================================================
+        // =============================================
 
         else if (
           step.type ===
@@ -612,8 +693,7 @@ Deno.serve(async (req) => {
 
           output = {
 
-            success:
-              true,
+            success: true,
 
             type:
               "notify",
@@ -631,12 +711,11 @@ Deno.serve(async (req) => {
               new Date().toISOString(),
 
           }
-
         }
 
-        // =================================================
+        // =============================================
         // CONDITIONAL
-        // =================================================
+        // =============================================
 
         else if (
           step.type ===
@@ -645,8 +724,7 @@ Deno.serve(async (req) => {
 
           output = {
 
-            success:
-              true,
+            success: true,
 
             type:
               "conditional_branch",
@@ -664,12 +742,11 @@ Deno.serve(async (req) => {
               new Date().toISOString(),
 
           }
-
         }
 
-        // =================================================
+        // =============================================
         // APPROVAL
-        // =================================================
+        // =============================================
 
         else if (
           step.type ===
@@ -678,8 +755,7 @@ Deno.serve(async (req) => {
 
           output = {
 
-            success:
-              true,
+            success: true,
 
             type:
               "approval_gate",
@@ -692,19 +768,25 @@ Deno.serve(async (req) => {
 
             config,
 
+            previous_output:
+              previousOutput ||
+              null,
+
             executed_at:
               new Date().toISOString(),
 
           }
-
         }
+
+        // =============================================
+        // UNKNOWN TYPE
+        // =============================================
 
         else {
 
           throw new Error(
             `Unsupported step type: ${step.type}`,
           )
-
         }
 
         console.log(
@@ -719,7 +801,7 @@ Deno.serve(async (req) => {
         const completedAt =
           new Date().toISOString()
 
-        const updateStepMutation = `
+        const completeStepMutation = `
           mutation CompleteStepRun(
             $id: uuid!
             $status: String!
@@ -757,11 +839,11 @@ Deno.serve(async (req) => {
           }
         `
 
-        const updateStepResponse =
+        const completeStepResponse =
           await nhost.graphql.request({
 
             query:
-              updateStepMutation,
+              completeStepMutation,
 
             variables: {
 
@@ -779,21 +861,26 @@ Deno.serve(async (req) => {
 
           })
 
-        const updateStepError =
+        const completeStepError =
           getGraphQLError(
-            updateStepResponse,
+            completeStepResponse,
           )
 
-        if (updateStepError) {
+        if (
+          completeStepError
+        ) {
+
           throw new Error(
-            updateStepError,
+            completeStepError,
           )
         }
 
         previousOutput =
           output
 
-      } catch (stepError) {
+      } catch (
+        stepError
+      ) {
 
         console.error(
           "STEP FAILED:",
@@ -804,27 +891,21 @@ Deno.serve(async (req) => {
         // SAVE FAILED STEP
         // =================================================
 
-        const failedOutput = {
+        const errorMessage =
+          stepError instanceof
+          Error
+            ? stepError.message
+            : "Step failed"
 
-          success:
-            false,
-
-          error:
-            stepError instanceof Error
-              ? stepError.message
-              : "Step failed",
-
-          executed_at:
-            new Date().toISOString(),
-
-        }
+        const failedAt =
+          new Date().toISOString()
 
         const failStepMutation = `
           mutation FailStepRun(
             $id: uuid!
             $status: String!
+            $error: String!
             $output: jsonb!
-            $error: String
             $completedAt: timestamptz!
           ) {
 
@@ -838,11 +919,11 @@ Deno.serve(async (req) => {
                 status:
                   $status
 
-                output:
-                  $output
-
                 error:
                   $error
+
+                output:
+                  $output
 
                 completed_at:
                   $completedAt
@@ -875,16 +956,30 @@ Deno.serve(async (req) => {
               status:
                 "failed",
 
-              output:
-                failedOutput,
-
               error:
-                stepError instanceof Error
-                  ? stepError.message
-                  : "Step failed",
+                errorMessage,
+
+              output: {
+
+                success:
+                  false,
+
+                error:
+                  errorMessage,
+
+                step_name:
+                  step.name,
+
+                step_number:
+                  index + 1,
+
+                executed_at:
+                  failedAt,
+
+              },
 
               completedAt:
-                new Date().toISOString(),
+                failedAt,
 
             },
 
@@ -901,7 +996,6 @@ Deno.serve(async (req) => {
             "Could not save failed step:",
             failError,
           )
-
         }
 
         throw stepError
@@ -915,7 +1009,7 @@ Deno.serve(async (req) => {
     const workflowCompletedAt =
       new Date().toISOString()
 
-    const completeMutation = `
+    const completeWorkflowMutation = `
       mutation CompleteWorkflowRun(
         $id: uuid!
         $status: String!
@@ -948,11 +1042,11 @@ Deno.serve(async (req) => {
       }
     `
 
-    const completeResponse =
+    const completeWorkflowResponse =
       await nhost.graphql.request({
 
         query:
-          completeMutation,
+          completeWorkflowMutation,
 
         variables: {
 
@@ -969,14 +1063,17 @@ Deno.serve(async (req) => {
 
       })
 
-    const completeError =
+    const completeWorkflowError =
       getGraphQLError(
-        completeResponse,
+        completeWorkflowResponse,
       )
 
-    if (completeError) {
+    if (
+      completeWorkflowError
+    ) {
+
       throw new Error(
-        completeError,
+        completeWorkflowError,
       )
     }
 
@@ -993,10 +1090,10 @@ Deno.serve(async (req) => {
     )
 
     return new Response(
+
       JSON.stringify({
 
-        success:
-          true,
+        success: true,
 
         workflowRunId,
 
@@ -1013,14 +1110,12 @@ Deno.serve(async (req) => {
           previousOutput,
 
       }),
+
       {
-
-        status:
-          200,
-
+        status: 200,
         headers,
-
       },
+
     )
 
   } catch (error) {
@@ -1045,6 +1140,12 @@ Deno.serve(async (req) => {
     if (workflowRunId) {
 
       try {
+
+        const errorMessage =
+          error instanceof
+          Error
+            ? error.message
+            : "Workflow execution failed"
 
         const failedAt =
           new Date().toISOString()
@@ -1108,46 +1209,53 @@ Deno.serve(async (req) => {
             failWorkflowResponse,
           )
 
-        if (failWorkflowError) {
+        if (
+          failWorkflowError
+        ) {
 
           console.error(
             "Could not mark workflow failed:",
             failWorkflowError,
           )
-
         }
 
-      } catch (dbError) {
+        console.error(
+          "Workflow failed because:",
+          errorMessage,
+        )
+
+      } catch (
+        dbError
+      ) {
 
         console.error(
           "Could not mark workflow failed:",
           dbError,
         )
-
       }
-
     }
 
     return new Response(
+
       JSON.stringify({
 
-        success:
-          false,
+        success: false,
+
+        workflowRunId,
 
         error:
-          error instanceof Error
+          error instanceof
+          Error
             ? error.message
             : "Workflow execution failed",
 
       }),
+
       {
-
-        status:
-          500,
-
+        status: 500,
         headers,
-
       },
+
     )
   }
 })
