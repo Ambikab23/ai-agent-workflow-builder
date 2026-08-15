@@ -7,7 +7,7 @@ object_relationships:
       foreign_key_constraint_on: workflow_run_id
   - name: workflow_step
     using:
-      foreign_key_constraint_on: workflow_step_id
+      foreign_key_constraint_on: step_id
 insert_permissions:
   - role: user
     permission:
@@ -21,7 +21,7 @@ insert_permissions:
         - started_at
         - id
         - workflow_run_id
-        - workflow_step_id
+        - step_id
     comment: ""
 select_permissions:
   - role: user
@@ -35,7 +35,7 @@ select_permissions:
         - started_at
         - id
         - workflow_run_id
-        - workflow_step_id
+        - step_id
       filter: {}
     comment: ""
 update_permissions:
@@ -50,7 +50,7 @@ update_permissions:
         - started_at
         - id
         - workflow_run_id
-        - workflow_step_id
+        - step_id
       filter: {}
       check: {}
     comment: ""

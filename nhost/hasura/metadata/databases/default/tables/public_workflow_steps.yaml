@@ -9,7 +9,7 @@ array_relationships:
   - name: step_runs
     using:
       foreign_key_constraint_on:
-        column: workflow_step_id
+        column: step_id
         table:
           name: step_runs
           schema: public
@@ -18,7 +18,7 @@ insert_permissions:
     permission:
       check: {}
       columns:
-        - position
+        - step_order
         - config
         - name
         - type
@@ -30,7 +30,7 @@ select_permissions:
   - role: user
     permission:
       columns:
-        - position
+        - step_order
         - config
         - name
         - type
@@ -43,7 +43,7 @@ update_permissions:
   - role: user
     permission:
       columns:
-        - position
+        - step_order
         - config
         - name
         - type
