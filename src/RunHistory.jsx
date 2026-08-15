@@ -11,6 +11,11 @@ function RunHistory({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+
+  // =====================================================
+  // GRAPHQL ERROR HELPER
+  // =====================================================
+
   const getGraphQLError = response => {
 
     if (response?.body?.errors?.length) {
@@ -23,6 +28,7 @@ function RunHistory({
 
     return null
   }
+
 
   // =====================================================
   // LOAD RUNS
@@ -42,6 +48,7 @@ function RunHistory({
 
       setLoading(true)
       setError('')
+
 
       const query = `
         query GetWorkflowRuns(
@@ -65,8 +72,6 @@ function RunHistory({
             status
             started_at
             completed_at
-            error
-            created_by
             created_at
 
             step_runs {
@@ -77,8 +82,6 @@ function RunHistory({
               status
               input
               output
-              error
-              attempt_count
               started_at
               completed_at
               created_at
@@ -100,6 +103,7 @@ function RunHistory({
         }
       `
 
+
       const response =
         await nhost.graphql.request({
 
@@ -114,12 +118,19 @@ function RunHistory({
 
         })
 
+
       const graphQLError =
         getGraphQLError(response)
 
+
       if (graphQLError) {
-        throw new Error(graphQLError)
+
+        throw new Error(
+          graphQLError
+        )
+
       }
+
 
       const data =
         response
@@ -127,7 +138,9 @@ function RunHistory({
           ?.data
           ?.workflow_runs || []
 
+
       setRuns(data)
+
 
     } catch (error) {
 
@@ -151,6 +164,11 @@ function RunHistory({
 
   }
 
+
+  // =====================================================
+  // LOAD WHEN WORKFLOW CHANGES
+  // =====================================================
+
   useEffect(() => {
 
     loadRuns()
@@ -159,14 +177,21 @@ function RunHistory({
     workflow?.id
   ])
 
+
+  // =====================================================
+  // FORMAT DATE
+  // =====================================================
+
   const formatDate = date => {
 
     if (!date) {
       return 'Not available'
     }
 
+
     const parsed =
       new Date(date)
+
 
     if (
       Number.isNaN(
@@ -178,9 +203,15 @@ function RunHistory({
 
     }
 
+
     return parsed.toLocaleString()
 
   }
+
+
+  // =====================================================
+  // STATUS CLASS
+  // =====================================================
 
   const getStatusClass = status => {
 
@@ -200,82 +231,140 @@ function RunHistory({
 
   }
 
+
+  // =====================================================
+  // RENDER
+  // =====================================================
+
   return (
 
     <div
       style={{
-        minHeight: '100vh',
-        background: '#f5f7fb',
-        padding: '30px'
+        minHeight:
+          '100vh',
+
+        background:
+          '#f5f7fb',
+
+        padding:
+          '30px'
       }}
     >
 
       <div
         style={{
-          maxWidth: '1000px',
-          margin: '0 auto'
+          maxWidth:
+            '1000px',
+
+          margin:
+            '0 auto'
         }}
       >
+
+        {/* BACK BUTTON */}
 
         <button
           type="button"
           onClick={onBack}
           style={{
-            marginBottom: '20px'
+            marginBottom:
+              '20px'
           }}
         >
           ← Back
         </button>
 
+
         <div
           style={{
-            background: '#fff',
-            borderRadius: '12px',
-            padding: '25px'
+            background:
+              '#fff',
+
+            borderRadius:
+              '12px',
+
+            padding:
+              '25px'
           }}
         >
+
+          {/* TITLE */}
 
           <h1>
             📋 Run History
           </h1>
 
+
           <h2>
-            {workflow?.name || 'Workflow'}
+            {workflow?.name ||
+              'Workflow'}
           </h2>
+
 
           <p>
             {workflow?.description ||
               'No description'}
           </p>
 
+
+          {/* ERROR */}
+
           {error && (
 
             <div
               style={{
-                marginTop: '20px',
-                padding: '15px',
-                borderRadius: '8px',
-                background: '#ffecec',
-                color: '#b00020'
+                marginTop:
+                  '20px',
+
+                padding:
+                  '15px',
+
+                borderRadius:
+                  '8px',
+
+                background:
+                  '#ffecec',
+
+                color:
+                  '#b00020'
               }}
             >
-              {error}
+
+              <strong>
+                Error:
+              </strong>
+
+              <p>
+                {error}
+              </p>
+
             </div>
 
           )}
+
+
+          {/* LOADING */}
 
           {loading && (
 
             <div
               style={{
-                padding: '30px',
-                textAlign: 'center'
+                padding:
+                  '30px',
+
+                textAlign:
+                  'center'
               }}
             >
+
               Loading run history...
+
             </div>
 
           )}
+
+
+          {/* EMPTY */}
 
           {!loading &&
             !error &&
@@ -283,11 +372,18 @@ function RunHistory({
 
               <div
                 style={{
-                  marginTop: '30px',
-                  padding: '30px',
-                  textAlign: 'center',
+                  marginTop:
+                    '30px',
+
+                  padding:
+                    '30px',
+
+                  textAlign:
+                    'center',
+
                   border:
                     '1px solid #ddd',
+
                   borderRadius:
                     '10px'
                 }}
@@ -297,14 +393,18 @@ function RunHistory({
                   No runs yet
                 </h3>
 
+
                 <p>
-                  Run this workflow from the dashboard
-                  to see its history here.
+                  Run this workflow from the
+                  dashboard to see its history here.
                 </p>
 
               </div>
 
             )}
+
+
+          {/* RUN LIST */}
 
           {!loading &&
             !error &&
@@ -312,245 +412,380 @@ function RunHistory({
 
               <div
                 style={{
-                  marginTop: '25px',
-                  display: 'grid',
-                  gap: '20px'
+                  marginTop:
+                    '25px',
+
+                  display:
+                    'grid',
+
+                  gap:
+                    '20px'
                 }}
               >
 
-                {runs.map(run => (
-
-                  <div
-                    key={run.id}
-                    style={{
-                      border:
-                        '1px solid #ddd',
-                      borderRadius:
-                        '12px',
-                      padding:
-                        '20px',
-                      background:
-                        '#fff'
-                    }}
-                  >
+                {runs.map(
+                  run => (
 
                     <div
+                      key={
+                        run.id
+                      }
+
                       style={{
-                        display:
-                          'flex',
-                        justifyContent:
-                          'space-between',
-                        alignItems:
-                          'center',
-                        flexWrap:
-                          'wrap',
-                        gap:
-                          '10px'
+                        border:
+                          '1px solid #ddd',
+
+                        borderRadius:
+                          '12px',
+
+                        padding:
+                          '20px',
+
+                        background:
+                          '#fff'
                       }}
                     >
 
-                      <h3>
-                        Run
-                      </h3>
+                      {/* RUN HEADER */}
 
-                      <span
-                        className={
-                          getStatusClass(
-                            run.status
-                          )
-                        }
+                      <div
                         style={{
-                          padding:
-                            '6px 12px',
-                          borderRadius:
-                            '20px',
-                          background:
-                            '#eee'
+                          display:
+                            'flex',
+
+                          justifyContent:
+                            'space-between',
+
+                          alignItems:
+                            'center',
+
+                          flexWrap:
+                            'wrap',
+
+                          gap:
+                            '10px'
                         }}
                       >
-                        {run.status}
-                      </span>
+
+                        <h3>
+                          Run
+                        </h3>
+
+
+                        <span
+                          className={
+                            getStatusClass(
+                              run.status
+                            )
+                          }
+
+                          style={{
+                            padding:
+                              '6px 12px',
+
+                            borderRadius:
+                              '20px',
+
+                            background:
+                              '#eee'
+                          }}
+                        >
+
+                          {run.status}
+
+                        </span>
+
+                      </div>
+
+
+                      {/* RUN ID */}
+
+                      <p>
+
+                        <strong>
+                          Run ID:
+                        </strong>{' '}
+
+                        {run.id}
+
+                      </p>
+
+
+                      {/* STARTED */}
+
+                      <p>
+
+                        <strong>
+                          Started:
+                        </strong>{' '}
+
+                        {formatDate(
+                          run.started_at
+                        )}
+
+                      </p>
+
+
+                      {/* COMPLETED */}
+
+                      <p>
+
+                        <strong>
+                          Completed:
+                        </strong>{' '}
+
+                        {formatDate(
+                          run.completed_at
+                        )}
+
+                      </p>
+
+
+                      {/* CREATED */}
+
+                      <p>
+
+                        <strong>
+                          Created:
+                        </strong>{' '}
+
+                        {formatDate(
+                          run.created_at
+                        )}
+
+                      </p>
+
+
+                      {/* STEP RUNS */}
+
+                      <h4>
+                        Step Runs
+                      </h4>
+
+
+                      {!run.step_runs?.length && (
+
+                        <p>
+                          No step runs recorded.
+                        </p>
+
+                      )}
+
+
+                      {run.step_runs
+                        ?.slice()
+                        .sort(
+                          (a, b) =>
+                            (
+                              a.workflow_step
+                                ?.step_order || 0
+                            ) -
+                            (
+                              b.workflow_step
+                                ?.step_order || 0
+                            )
+                        )
+                        .map(
+                          (
+                            stepRun,
+                            index
+                          ) => (
+
+                            <div
+                              key={
+                                stepRun.id
+                              }
+
+                              style={{
+                                border:
+                                  '1px solid #eee',
+
+                                borderRadius:
+                                  '8px',
+
+                                padding:
+                                  '15px',
+
+                                marginTop:
+                                  '10px'
+                              }}
+                            >
+
+                              {/* STEP NAME */}
+
+                              <strong>
+
+                                Step {index + 1}:{' '}
+
+                                {stepRun
+                                  .workflow_step
+                                  ?.name ||
+                                  'Unknown Step'}
+
+                              </strong>
+
+
+                              {/* TYPE */}
+
+                              <p>
+
+                                Type:{' '}
+
+                                {stepRun
+                                  .workflow_step
+                                  ?.type ||
+                                  'Unknown'}
+
+                              </p>
+
+
+                              {/* STATUS */}
+
+                              <p>
+
+                                Status:{' '}
+
+                                {stepRun.status}
+
+                              </p>
+
+
+                              {/* STARTED */}
+
+                              <p>
+
+                                Started:{' '}
+
+                                {formatDate(
+                                  stepRun.started_at
+                                )}
+
+                              </p>
+
+
+                              {/* COMPLETED */}
+
+                              <p>
+
+                                Completed:{' '}
+
+                                {formatDate(
+                                  stepRun.completed_at
+                                )}
+
+                              </p>
+
+
+                              {/* INPUT */}
+
+                              {stepRun.input && (
+
+                                <details
+                                  style={{
+                                    marginTop:
+                                      '10px'
+                                  }}
+                                >
+
+                                  <summary>
+                                    View Input
+                                  </summary>
+
+
+                                  <pre
+                                    style={{
+                                      whiteSpace:
+                                        'pre-wrap',
+
+                                      wordBreak:
+                                        'break-word',
+
+                                      background:
+                                        '#f5f5f5',
+
+                                      padding:
+                                        '10px',
+
+                                      borderRadius:
+                                        '6px',
+
+                                      marginTop:
+                                        '10px'
+                                    }}
+                                  >
+
+                                    {JSON.stringify(
+                                      stepRun.input,
+                                      null,
+                                      2
+                                    )}
+
+                                  </pre>
+
+                                </details>
+
+                              )}
+
+
+                              {/* OUTPUT */}
+
+                              {stepRun.output && (
+
+                                <details
+                                  style={{
+                                    marginTop:
+                                      '10px'
+                                  }}
+                                >
+
+                                  <summary>
+                                    View Output
+                                  </summary>
+
+
+                                  <pre
+                                    style={{
+                                      whiteSpace:
+                                        'pre-wrap',
+
+                                      wordBreak:
+                                        'break-word',
+
+                                      background:
+                                        '#f5f5f5',
+
+                                      padding:
+                                        '10px',
+
+                                      borderRadius:
+                                        '6px',
+
+                                      marginTop:
+                                        '10px'
+                                    }}
+                                  >
+
+                                    {JSON.stringify(
+                                      stepRun.output,
+                                      null,
+                                      2
+                                    )}
+
+                                  </pre>
+
+                                </details>
+
+                              )}
+
+                            </div>
+
+                          )
+                        )}
 
                     </div>
 
-                    <p>
-                      <strong>
-                        Run ID:
-                      </strong>{' '}
-                      {run.id}
-                    </p>
-
-                    <p>
-                      <strong>
-                        Started:
-                      </strong>{' '}
-                      {formatDate(
-                        run.started_at
-                      )}
-                    </p>
-
-                    <p>
-                      <strong>
-                        Completed:
-                      </strong>{' '}
-                      {formatDate(
-                        run.completed_at
-                      )}
-                    </p>
-
-                    {run.error && (
-
-                      <p
-                        style={{
-                          color:
-                            '#b00020'
-                        }}
-                      >
-                        <strong>
-                          Error:
-                        </strong>{' '}
-                        {run.error}
-                      </p>
-
-                    )}
-
-                    <h4>
-                      Step Runs
-                    </h4>
-
-                    {!run.step_runs?.length && (
-
-                      <p>
-                        No step runs recorded.
-                      </p>
-
-                    )}
-
-                    {run.step_runs
-                      ?.slice()
-                      .sort(
-                        (a, b) =>
-                          (
-                            a.workflow_step
-                              ?.step_order || 0
-                          ) -
-                          (
-                            b.workflow_step
-                              ?.step_order || 0
-                          )
-                      )
-                      .map(
-                        (
-                          stepRun,
-                          index
-                        ) => (
-
-                          <div
-                            key={
-                              stepRun.id
-                            }
-                            style={{
-                              border:
-                                '1px solid #eee',
-                              borderRadius:
-                                '8px',
-                              padding:
-                                '15px',
-                              marginTop:
-                                '10px'
-                            }}
-                          >
-
-                            <strong>
-                              Step {index + 1}:{' '}
-                              {stepRun
-                                .workflow_step
-                                ?.name ||
-                                'Unknown Step'}
-                            </strong>
-
-                            <p>
-                              Type:{' '}
-                              {stepRun
-                                .workflow_step
-                                ?.type ||
-                                'Unknown'}
-                            </p>
-
-                            <p>
-                              Status:{' '}
-                              {stepRun.status}
-                            </p>
-
-                            <p>
-                              Started:{' '}
-                              {formatDate(
-                                stepRun.started_at
-                              )}
-                            </p>
-
-                            <p>
-                              Completed:{' '}
-                              {formatDate(
-                                stepRun.completed_at
-                              )}
-                            </p>
-
-                            {stepRun.error && (
-
-                              <p
-                                style={{
-                                  color:
-                                    '#b00020'
-                                }}
-                              >
-                                Error:{' '}
-                                {stepRun.error}
-                              </p>
-
-                            )}
-
-                            {stepRun.output && (
-
-                              <details>
-
-                                <summary>
-                                  View Output
-                                </summary>
-
-                                <pre
-                                  style={{
-                                    whiteSpace:
-                                      'pre-wrap',
-                                    wordBreak:
-                                      'break-word',
-                                    background:
-                                      '#f5f5f5',
-                                    padding:
-                                      '10px',
-                                    borderRadius:
-                                      '6px'
-                                  }}
-                                >
-                                  {JSON.stringify(
-                                    stepRun.output,
-                                    null,
-                                    2
-                                  )}
-                                </pre>
-
-                              </details>
-
-                            )}
-
-                          </div>
-
-                        )
-                      )}
-
-                  </div>
-
-                ))}
+                  )
+                )}
 
               </div>
 
@@ -563,6 +798,8 @@ function RunHistory({
     </div>
 
   )
+
 }
+
 
 export default RunHistory

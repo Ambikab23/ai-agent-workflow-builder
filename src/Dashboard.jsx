@@ -703,6 +703,10 @@ function Dashboard({
       // 4. COMPLETE WORKFLOW RUN
       // =================================================
 
+      // IMPORTANT:
+      // workflow_runs does NOT have an "error" column.
+      // Therefore we do NOT send error: null here.
+
       const completeRunMutation = `
         mutation CompleteWorkflowRun(
           $id: uuid!
@@ -718,7 +722,6 @@ function Dashboard({
             _set: {
               status: $status
               completed_at: $completedAt
-              error: null
             }
           ) {
 
@@ -793,11 +796,14 @@ function Dashboard({
 
         try {
 
+          // IMPORTANT:
+          // workflow_runs has no "error" column.
+          // Only update the status and completed_at.
+
           const failRunMutation = `
             mutation FailWorkflowRun(
               $id: uuid!
               $status: String!
-              $error: String!
               $completedAt: timestamptz!
             ) {
 
@@ -808,7 +814,6 @@ function Dashboard({
 
                 _set: {
                   status: $status
-                  error: $error
                   completed_at: $completedAt
                 }
               ) {
@@ -822,29 +827,42 @@ function Dashboard({
           `
 
 
-          await nhost.graphql.request({
+          const failResponse =
+            await nhost.graphql.request({
 
-            query:
-              failRunMutation,
+              query:
+                failRunMutation,
 
-            variables: {
+              variables: {
 
-              id:
-                workflowRunId,
+                id:
+                  workflowRunId,
 
-              status:
-                'failed',
+                status:
+                  'failed',
 
-              error:
-                error?.message ||
-                'Workflow execution failed.',
+                completedAt:
+                  new Date().toISOString()
 
-              completedAt:
-                new Date().toISOString()
+              }
 
-            }
+            })
 
-          })
+
+          const failError =
+            getGraphQLError(
+              failResponse
+            )
+
+
+          if (failError) {
+
+            console.error(
+              'FAILED TO MARK RUN AS FAILED:',
+              failError
+            )
+
+          }
 
         } catch (
           updateError
@@ -1312,35 +1330,12 @@ function Dashboard({
 
 
   // =====================================================
-  // GET TRIGGER
-  // =====================================================
-
-  const getTrigger = workflow => {
-
-    const trigger =
-      workflow.workflow_triggers?.[0]
-
-
-    return (
-      trigger?.type ||
-      'manual'
-    )
-
-  }
-
-
-  // =====================================================
   // RENDER
   // =====================================================
 
   return (
 
     <div className="dashboard">
-
-
-      {/* =================================================
-          HEADER
-      ================================================= */}
 
       <header className="dashboard-header">
 
@@ -1367,10 +1362,6 @@ function Dashboard({
       </header>
 
 
-      {/* =================================================
-          MAIN
-      ================================================= */}
-
       <main className="dashboard-content">
 
         <h2>
@@ -1382,10 +1373,6 @@ function Dashboard({
           {user?.email || 'User'}
         </p>
 
-
-        {/* =================================================
-            STATS
-        ================================================= */}
 
         <div className="stats">
 
@@ -1434,10 +1421,6 @@ function Dashboard({
         </div>
 
 
-        {/* =================================================
-            WORKFLOW HEADER
-        ================================================= */}
-
         <div className="workflow-section">
 
           <div>
@@ -1465,10 +1448,6 @@ function Dashboard({
 
         </div>
 
-
-        {/* =================================================
-            ERROR
-        ================================================= */}
 
         {error && (
 
@@ -1504,10 +1483,6 @@ function Dashboard({
         )}
 
 
-        {/* =================================================
-            LOADING
-        ================================================= */}
-
         {loading && (
 
           <div
@@ -1526,10 +1501,6 @@ function Dashboard({
 
         )}
 
-
-        {/* =================================================
-            EMPTY
-        ================================================= */}
 
         {!loading &&
           !error &&
@@ -1578,10 +1549,6 @@ function Dashboard({
 
           )}
 
-
-        {/* =================================================
-            WORKFLOW LIST
-        ================================================= */}
 
         {!loading &&
           !error &&
@@ -1644,22 +1611,16 @@ function Dashboard({
                       }}
                     >
 
-                      {/* WORKFLOW NAME */}
-
                       <h3>
                         {workflow.name}
                       </h3>
 
-
-                      {/* DESCRIPTION */}
 
                       <p>
                         {workflow.description ||
                           'No description'}
                       </p>
 
-
-                      {/* TRIGGER */}
 
                       <p>
 
@@ -1673,8 +1634,6 @@ function Dashboard({
                       </p>
 
 
-                      {/* STATUS */}
-
                       <p>
 
                         <strong>
@@ -1686,8 +1645,6 @@ function Dashboard({
                       </p>
 
 
-                      {/* STEPS */}
-
                       <p>
 
                         <strong>
@@ -1698,8 +1655,6 @@ function Dashboard({
 
                       </p>
 
-
-                      {/* CREATED */}
 
                       <p>
 
@@ -1713,8 +1668,6 @@ function Dashboard({
 
                       </p>
 
-
-                      {/* STEP PREVIEW */}
 
                       {steps.length > 0 && (
 
@@ -1769,8 +1722,6 @@ function Dashboard({
                       )}
 
 
-                      {/* ACTIONS */}
-
                       <div
                         style={{
                           display:
@@ -1786,8 +1737,6 @@ function Dashboard({
                             'wrap'
                         }}
                       >
-
-                        {/* EDIT */}
 
                         <button
                           type="button"
@@ -1805,8 +1754,6 @@ function Dashboard({
                           ✏️ Edit
                         </button>
 
-
-                        {/* RUN */}
 
                         <button
                           type="button"
@@ -1830,8 +1777,6 @@ function Dashboard({
                         </button>
 
 
-                        {/* HISTORY */}
-
                         <button
                           type="button"
                           onClick={() =>
@@ -1848,8 +1793,6 @@ function Dashboard({
                           📋 Run History
                         </button>
 
-
-                        {/* DELETE */}
 
                         <button
                           type="button"
